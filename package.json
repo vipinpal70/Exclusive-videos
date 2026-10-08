@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "db:migrate": "node scripts/migrate.mjs"
+    "start": "next start"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
