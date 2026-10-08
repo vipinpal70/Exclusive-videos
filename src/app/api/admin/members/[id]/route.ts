@@ -1,7 +1,7 @@
 import { adminRoute, fail, json } from "@/lib/auth";
 import { execute, query, queryOne } from "@/lib/db";
 import { checkEligibility, lookupClient } from "@/lib/elefin";
-import { deliverVideos, getMember, upsertMemberFromLookup } from "@/lib/members";
+import { DeliveryError, deliverVideos, getMember, setPendingVideos, upsertMemberFromLookup } from "@/lib/members";
 import { getSettings } from "@/lib/settings";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -33,13 +33,14 @@ export const POST = adminRoute<Ctx>(async (req, { params }) => {
       return json({ ok: true, message: "Member unblocked." });
     case "unlink_telegram":
       await execute(
-        "UPDATE members SET telegram_id = NULL, telegram_username = NULL, telegram_name = NULL, telegram_photo_url = NULL, telegram_linked_at = NULL WHERE id = ?",
+        "UPDATE members SET telegram_id = NULL, telegram_username = NULL, telegram_name = NULL, telegram_photo_url = NULL, telegram_linked_at = NULL, pending_video_ids = NULL WHERE id = ?",
         [id]
       );
       return json({ ok: true, message: "Telegram unlinked. The user can connect a new account." });
     case "reset_delivery":
-      await execute("UPDATE members SET last_delivered_at = NULL WHERE id = ?", [id]);
-      return json({ ok: true, message: "Delivery reset. The user can request videos again." });
+      // Earlier deliveries stay in the history but no longer count towards the per-video re-delivery rules.
+      await execute("UPDATE members SET last_delivered_at = NULL, delivery_reset_at = UTC_TIMESTAMP() WHERE id = ?", [id]);
+      return json({ ok: true, message: "Delivery reset. The member can request every video again right away." });
     case "refresh": {
       const s = await getSettings();
       const r = await lookupClient(m.email, s);
@@ -51,8 +52,17 @@ export const POST = adminRoute<Ctx>(async (req, { params }) => {
     case "deliver": {
       if (!m.telegram_id) return fail("Member has no Telegram linked.");
       const s = await getSettings();
-      const report = await deliverVideos(m, s);
-      return json({ ok: true, message: `Sent ${report.sent} video(s), ${report.failed} failed.`, report });
+      try {
+        // Admin sends ignore the re-delivery and cooldown rules.
+        const report = await deliverVideos(m, s, { force: true });
+        return json({ ok: true, message: `Sent ${report.sent} video(s), ${report.failed} failed.`, report });
+      } catch (e) {
+        if (e instanceof DeliveryError && e.code === "need_start") {
+          await setPendingVideos(m.id, e.pendingIds);
+          return fail("The bot can't message this member yet. The videos will be sent automatically when they open the bot and press Start.", 409);
+        }
+        return fail((e as Error).message);
+      }
     }
   }
   return fail("Unknown action.");

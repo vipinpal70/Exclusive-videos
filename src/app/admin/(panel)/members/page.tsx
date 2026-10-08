@@ -8,6 +8,8 @@ import { useConfirm, type ConfirmOptions } from "@/components/confirm";
 import { ActionMenu, Dot, Empty, Loading, Modal, PageHeader, Pagination, SearchInput, StatusBadge, Tabs, type MenuAction } from "@/components/admin-ui";
 import { useToast } from "@/components/toast";
 import { api, fmtDate, timeAgo } from "@/lib/api";
+import { BulkBlock } from "./bulk-block";
+import { BulkSend } from "./bulk-send";
 
 interface Member {
   id: number;
@@ -53,7 +55,7 @@ function confirmFor(action: MemberAction | "delete", m: Member): ConfirmOptions 
     case "deliver":
       return {
         title: "Send videos now?",
-        message: <>All active videos will be sent to {who} on {tg} right away. This counts as a delivery.</>,
+        message: <>All active videos will be sent to {who} on {tg} right away, including ones they already received. Re-delivery and cooldown rules don't apply to admin sends.</>,
         confirmLabel: "Send videos",
       };
     case "refresh":
@@ -65,7 +67,7 @@ function confirmFor(action: MemberAction | "delete", m: Member): ConfirmOptions 
     case "reset_delivery":
       return {
         title: "Reset delivery?",
-        message: <>{who} will be able to request the videos again straight away, even if re-delivery is turned off or the cooldown hasn't passed.</>,
+        message: <>{who} will be able to request every video again straight away, even if re-delivery is turned off or a cooldown hasn't passed. Their delivery history is kept.</>,
         confirmLabel: "Reset delivery",
       };
     case "unlink_telegram":
@@ -191,10 +193,41 @@ function Members() {
   }, [q]);
 
   const { menu } = useMemberActions(load);
+  const { can } = useAdmin();
+  const canBulk = can("broadcast.send");
+  const canBlock = can("members.manage");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [unblockOpen, setUnblockOpen] = useState(false);
 
   return (
     <>
-      <PageHeader title="Members" subtitle="Everyone who has checked their Elefin email on the site." />
+      <PageHeader
+        title="Members"
+        subtitle="Everyone who has checked their Elefin email on the site."
+        actions={
+          <>
+            {canBlock && (
+              <>
+                <button className="btn btn-secondary" onClick={() => setUnblockOpen(true)}>
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Bulk unblock
+                </button>
+                <button className="btn btn-secondary" onClick={() => setBlockOpen(true)}>
+                  <Ban className="h-3.5 w-3.5" /> Bulk block
+                </button>
+              </>
+            )}
+            {canBulk && (
+              <button className="btn btn-primary" onClick={() => setBulkOpen(true)}>
+                <Send className="h-3.5 w-3.5" /> Bulk send videos
+              </button>
+            )}
+          </>
+        }
+      />
+      <BulkBlock mode="block" open={blockOpen} onClose={() => setBlockOpen(false)} onFinished={load} />
+      <BulkBlock mode="unblock" open={unblockOpen} onClose={() => setUnblockOpen(false)} onFinished={load} />
+      <BulkSend open={bulkOpen} onClose={() => setBulkOpen(false)} onFinished={load} />
 
       <div className="card overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-[#262a33] px-3 py-2 lg:flex-row lg:items-center lg:justify-between">

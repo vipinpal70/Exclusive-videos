@@ -10,7 +10,7 @@ export const PUT = adminRoute(async (req, _ctx, admin) => {
   const updates: Record<string, string> = {};
 
   for (const def of SETTING_DEFS) {
-    if (!(def.key in body)) continue;
+    if (def.internal || !(def.key in body)) continue;
     if (!can(admin, SETTINGS_GROUP_PERMISSION[def.group])) {
       return fail("You don't have permission to edit these settings.", 403);
     }

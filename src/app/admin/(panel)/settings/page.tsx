@@ -1,10 +1,10 @@
 "use client";
 
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAdmin, ViewOnlyBadge } from "@/components/admin-context";
 import { useConfirm } from "@/components/confirm";
-import { Loading, PageHeader, Toggle } from "@/components/admin-ui";
+import { Dot, Loading, PageHeader, Toggle } from "@/components/admin-ui";
 import { SETTINGS_GROUP_PERMISSION } from "@/lib/permissions";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
@@ -119,6 +119,7 @@ export default function SettingsPage() {
                 </div>
 
                 {g.id === "telegram" && <TelegramLoginUrls />}
+                {g.id === "telegram" && <TelegramWebhookPanel editable={editable} />}
 
                 <fieldset disabled={!editable} className="divide-y divide-[#20242c] disabled:[&_input]:opacity-70">
                   {items.map((s) => (
@@ -208,6 +209,114 @@ function Field({ s, value, onChange, onClear, readOnly }: { s: Setting; value: s
         {s.help && <p className="mt-0.5 text-[12px] leading-relaxed text-[#7d8390]">{s.help}</p>}
       </div>
       <div className={s.type === "boolean" ? "flex md:justify-end" : ""}>{control}</div>
+    </div>
+  );
+}
+
+interface WebhookStatus {
+  configured: boolean;
+  url?: string | null;
+  expected: string;
+  connected?: boolean;
+  pending?: number;
+  lastError?: string | null;
+  lastErrorAt?: string | null;
+}
+
+/** Shows whether the bot webhook points at this site, and connects or disconnects it. */
+function TelegramWebhookPanel({ editable }: { editable: boolean }) {
+  const [status, setStatus] = useState<WebhookStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  const load = useCallback(() => {
+    api<WebhookStatus>("/api/admin/telegram/webhook")
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }, []);
+  useEffect(load, [load]);
+
+  async function connect() {
+    setBusy(true);
+    try {
+      const r = await api<{ message: string }>("/api/admin/telegram/webhook", { body: {} });
+      toast(r.message, "success");
+      load();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    const ok = await confirm({
+      title: "Disconnect webhook?",
+      message: "The bot will stop replying to /start and /videos, and members who haven't started the bot won't get videos automatically.",
+      confirmLabel: "Disconnect",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await api<{ message: string }>("/api/admin/telegram/webhook", { method: "DELETE" });
+      toast(r.message, "success");
+      load();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status) return null;
+  const elsewhere = !!status.url && status.url !== status.expected;
+  const tone = status.connected ? "ok" : elsewhere ? "warn" : "muted";
+  const label = !status.configured
+    ? "Save the bot token first"
+    : status.connected
+      ? "Connected"
+      : elsewhere
+        ? "Connected to a different address"
+        : "Not connected";
+
+  return (
+    <div className="border-b border-[#262a33] px-4 py-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[13px] font-medium text-[#eceef2]">
+            Bot webhook
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-normal text-[#b4b9c4]">
+              <Dot tone={tone} /> {label}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-[#7d8390]">
+            Lets the bot answer /start and /videos, and send videos to members who open the bot from the website.
+            {elsewhere && <> Currently pointing to <code className="text-[#b4b9c4]">{status.url}</code>.</>}
+          </p>
+          {status.lastError && (
+            <p className="mt-1 text-[12px] text-[#f19aa5]">
+              Last error{status.lastErrorAt ? ` (${new Date(status.lastErrorAt).toLocaleString()})` : ""}: {status.lastError}
+            </p>
+          )}
+        </div>
+        {editable && status.configured && (
+          <div className="flex shrink-0 gap-2">
+            {status.url && (
+              <button className="btn btn-secondary btn-sm" onClick={disconnect} disabled={busy}>
+                Disconnect
+              </button>
+            )}
+            <button className="btn btn-primary btn-sm" onClick={connect} disabled={busy}>
+              {busy && <Loader2 className="h-3 w-3 animate-spin" />} {status.connected ? "Reconnect" : "Connect webhook"}
+            </button>
+          </div>
+        )}
+      </div>
+      {editable && status.configured && !status.connected && (
+        <p className="mt-1.5 text-[11px] text-[#646b78]">Will connect to {status.expected}. Telegram needs a public HTTPS address (your domain or ngrok).</p>
+      )}
     </div>
   );
 }

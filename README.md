@@ -12,7 +12,8 @@ A Next.js app that verifies Elefin broker clients and delivers mentorship videos
 1. **Verify account.** The client enters their email. The server calls `GET {Elefin API base}/clients/lookup?email=…` with `Authorization: Bearer <token>` and checks the eligibility rules: minimum lots, and optionally affiliated, active status and minimum net deposit. Ineligible clients see why, with their lots against the minimum and a link to open an Elefin account.
 2. **Confirm email (optional).** If email OTP is on, a 6-digit code is emailed through Resend.
 3. **Connect Telegram.** The client clicks **Log in with Telegram** and approves on Telegram's page. The `telegram:bot_access` scope lets the bot message them. The server exchanges the code with your client ID and secret and verifies the signed ID token. Each email can be linked to one Telegram account, and each Telegram account to one email.
-4. **Get videos.** The bot sends every active video with `copyMessage` from your private channel, in order, with your custom caption. An optional intro and outro message wrap the videos. Content protection can stop clients forwarding or saving them.
+4. **Get videos.** The client sees the list of videos, each with a **Get** button, plus **Get all**. The bot sends each one with `copyMessage` from your private channel, with your custom caption. **Get all** also sends the optional intro and outro messages. Re-delivery and cooldown rules apply **per video**, so newly added videos can always be requested.
+5. **Bot not started yet?** If Telegram answers _chat not found_ or _bot can't initiate conversation_, the website saves the request and sends the client to `t.me/<bot>?start=video`. When they press **Start**, the bot webhook sends the requested videos. In the bot, `/videos` shows the same list with inline **Get** buttons.
 
 ---
 
@@ -41,11 +42,11 @@ Open `http://localhost:3000/admin`. The first visit goes to `/admin/setup`, wher
 
 ### Environment (`.env.local`)
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS` | Yes | MySQL connection. |
-| `SESSION_SECRET` | Yes | Long random string used to sign admin and client sessions. Changing it signs everyone out. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. |
-| `DEV_EMAIL` | No | **Dev only.** When running `next dev`, every email (OTP codes, test emails) goes to this address instead of the real recipient, and the subject shows who it was meant for. It has no effect in production. |
+| Variable                                              | Required | Description                                                                                                                                                                                                 |
+| ----------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS` | Yes      | MySQL connection.                                                                                                                                                                                           |
+| `SESSION_SECRET`                                      | Yes      | Long random string used to sign admin and client sessions. Changing it signs everyone out. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.                    |
+| `DEV_EMAIL`                                           | No       | **Dev only.** When running `next dev`, every email (OTP codes, test emails) goes to this address instead of the real recipient, and the subject shows who it was meant for. It has no effect in production. |
 
 Every other credential (Elefin token, bot token, Telegram Login secret, Resend key) is stored in the `settings` table and managed from **Admin → Settings**.
 
@@ -55,13 +56,13 @@ Every other credential (Elefin token, bot token, Telegram Login secret, Resend k
 
 Go to **Admin → Settings** and fill in each section. Each integration section has a **Test** button that uses the saved values.
 
-| Section | What to set |
-| --- | --- |
-| **Elefin API** | API base URL, without a trailing slash (`/clients/lookup` is appended), and the API token. |
-| **Eligibility** | Minimum lots, require affiliated, require active status, minimum net deposit (0 turns it off), allow re-delivery and the re-delivery cooldown. |
-| **Telegram bot** | Bot token (the bot username fills in automatically), Login client ID and secret, test chat ID, messages before and after the videos, and content protection. |
-| **Email verification** | Turn OTP on or off, Resend API key, from email, from name, email header text, and OTP expiry. |
-| **Site** | Site name (page header, browser tab, admin sidebar, email copyright), hero title and subtitle, sign-up/referral link, support link. |
+| Section                | What to set                                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Elefin API**         | API base URL, without a trailing slash (`/clients/lookup` is appended), and the API token.                                                                                                           |
+| **Eligibility**        | Minimum lots, require affiliated, require active status, minimum net deposit (0 turns it off), and per-video re-delivery: whether each video can be requested again, and the cooldown before it can. |
+| **Telegram bot**       | Bot token (the bot username fills in automatically), Login client ID and secret, test chat ID, messages before and after the videos, and content protection.                                         |
+| **Email verification** | Turn OTP on or off, Resend API key, from email, from name, email header text, and OTP expiry.                                                                                                        |
+| **Site**               | Site name (page header, browser tab, admin sidebar, email copyright), hero title and subtitle, sign-up/referral link, support link.                                                                  |
 
 ### Telegram setup
 
@@ -71,7 +72,8 @@ Go to **Admin → Settings** and fill in each section. Each integration section 
    - Copy the **client ID** (your bot's numeric ID) and the **client secret** into Settings.
    - Register the **Allowed URL** and **Redirect URI** shown at the top of Admin Panel Settings → Telegram bot, each with a Copy button. The redirect URI is `https://<your-domain>/api/telegram/callback`. Telegram only redirects to registered URLs.
 3. **Video channel:** add the bot to your private video channel as an **administrator**.
-4. **Test:** click **Test bot**. It confirms the token works, checks the login client ID matches the bot, and sends a message to the test chat ID if you set one.
+4. **Webhook:** open the admin panel on your public HTTPS address (your domain, or ngrok in development) and click **Connect webhook** under Settings → Telegram bot. This points the bot at `/api/bot/webhook` with a secret token and sets the `/videos` command. Click **Reconnect** if you change the bot token or domain.
+5. **Test:** click **Test bot**. It confirms the token works, checks the login client ID matches the bot, and sends a message to the test chat ID if you set one.
 
 ### Adding videos
 
@@ -88,14 +90,36 @@ Drag rows to reorder. Use the **⋯** menu to edit, re-check permissions, open i
 
 ## Admin panel
 
-| Page | What it does |
-| --- | --- |
-| **Overview** | Key numbers, a setup checklist, eligibility checks over 14 days, the funnel (with a **?** that explains each stage), and recent deliveries. |
-| **Videos** | The video list, with filters (All, Active, Inactive, Issues), search, drag-to-reorder and a **⋯** menu per row. |
-| **Members** | Everyone who verified an email. Filter, search, view Elefin and Telegram details and delivery history. Actions: send videos now, refresh from Elefin, reset delivery, unlink Telegram, block or unblock, delete. Every action asks for confirmation. |
-| **Activity logs** | Every delivery (sent or failed, with the Telegram error) and every eligibility check (result, lots, IP address). |
-| **Settings** | All integrations and rules (see above). |
-| **Admins** | Admin accounts and their permissions, plus **Change my password**. |
+| Page              | What it does                                                                                                                                                                                                                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Overview**      | Key numbers, a setup checklist, eligibility checks over 14 days, the funnel (with a **?** that explains each stage), and recent deliveries.                                                                                                                                                                      |
+| **Videos**        | The video list, with filters (All, Active, Inactive, Issues), search, drag-to-reorder and a **⋯** menu per row.                                                                                                                                                                                                  |
+| **Members**       | Everyone who verified an email. Filter, search, view Elefin and Telegram details and delivery history. Actions: send videos now, refresh from Elefin, reset delivery, unlink Telegram, block or unblock, delete. Every action asks for confirmation. **Bulk send videos** sends to everyone at once (see below). |
+| **Activity logs** | Every delivery (sent or failed, with the Telegram error) and every eligibility check (result, lots, IP address).                                                                                                                                                                                                 |
+| **Settings**      | All integrations and rules (see above).                                                                                                                                                                                                                                                                          |
+| **Admins**        | Admin accounts and their permissions, plus **Change my password**.                                                                                                                                                                                                                                               |
+
+### Bulk send
+
+**Members → Bulk send videos** sends videos to every eligible, unblocked member who has Telegram linked. It needs the **Bulk send videos** permission.
+
+- **Send all videos** off (the default): each member gets only the videos they have never received.
+- **Send all videos** on: every active video goes to everyone again, ignoring what they already received and any cooldown.
+- The dialog shows how many members and messages are involved before you start, and the confirmation repeats it.
+- Sending runs from your browser at **20 messages per second**, with live progress: sent, failed, bot not started and skipped counts, rate and time left. **Stop** ends it after the current batch.
+- **Keep the tab open while it runs.** Closing the tab shows the browser's leave warning. The back button and sidebar links ask before leaving, and leaving stops the send.
+- Members who haven't started the bot are counted as **Bot not started**. They can still get their videos from the website. Every message is recorded in **Activity logs**.
+
+### Bulk block and bulk unblock
+
+**Members → Bulk block** blocks members who have gone inactive at Elefin. It needs the **Edit members** permission.
+
+1. Set one or both rules: **hasn't traded in the last N days** and **hasn't deposited in the last N days**. An empty field means the rule isn't used, and at least one is required. With both, choose whether a member must match **both** rules or **either** one. Members with no trade or deposit on record count as inactive.
+2. **Collect data from Elefin** loads every funded client from `GET /clients?funded_only=1` (200 per page) with a progress bar. If a page fails, you can retry from that page.
+3. Review the counts: **will be blocked**, **safe**, **not registered here** (Elefin clients who never verified on this site), **already blocked**, and members missing from Elefin's funded list (left unchanged). Change the rules to recount instantly, without loading again.
+4. **Block N members** asks for confirmation, then blocks them. Unblock anyone from their ⋯ menu.
+
+**Members → Bulk unblock** works the same way in reverse, for blocked members who are active again. Its rules are **traded in the last N days** and **deposited in the last N days**. It defaults to **either rule matches**, and members with no trade or deposit on record don't meet a rule. If nobody is blocked, it says so without loading anything from Elefin. If no blocked member meets the rules, the review says so too.
 
 ### Admins and permissions
 
@@ -111,6 +135,7 @@ Permissions are set per admin, not through roles. They're checked against the da
   - Edit Telegram bot settings
   - Add and edit videos
   - Edit members (send videos, reset delivery, unlink, block, delete)
+  - Bulk send videos
 
 To prevent lock-outs, you can't remove your own super admin access or delete yourself, and there is always at least one super admin. Pages hide or lock controls an admin can't use, and Settings sections they can't edit show **View only**.
 
@@ -166,15 +191,15 @@ npm start          # serves on port 3000; set PORT to change
 
 Created and updated automatically (`npm run db:migrate`, or on first query):
 
-| Table | Contents |
-| --- | --- |
-| `settings` | Key/value store for every admin-panel setting. |
-| `admins` | Admin accounts, password hashes, `is_super` and `permissions`. |
-| `videos` | Telegram message links, captions, order, active flag and the result of the last permission check. |
-| `members` | Clients who verified: Elefin data, eligibility, linked Telegram account and delivery counts. |
-| `otp_codes` | Hashed one-time codes with expiry and attempt counts. |
-| `deliveries` | One row per video sent to a member (sent or failed, with the error). |
-| `lookup_logs` | Every eligibility check (email, result, lots, IP address). |
+| Table         | Contents                                                                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settings`    | Key/value store for every admin-panel setting.                                                                                                                         |
+| `admins`      | Admin accounts, password hashes, `is_super` and `permissions`.                                                                                                         |
+| `videos`      | Telegram message links, captions, order, active flag and the result of the last permission check.                                                                      |
+| `members`     | Clients who verified: Elefin data, eligibility, linked Telegram account, delivery counts, videos waiting for the bot to be started, and the last admin delivery reset. |
+| `otp_codes`   | Hashed one-time codes with expiry and attempt counts.                                                                                                                  |
+| `deliveries`  | One row per video sent to a member (sent or failed, with the error).                                                                                                   |
+| `lookup_logs` | Every eligibility check (email, result, lots, IP address).                                                                                                             |
 
 ---
 
@@ -188,7 +213,8 @@ src/
     admin/(panel)/                Admin pages: overview, videos, members, logs, settings, admins
     api/verify/*                  Email check, OTP verify and resend
     api/telegram/start|callback   Telegram Login (OpenID Connect)
-    api/deliver                   Sends the videos to the signed-in client
+    api/videos, api/deliver       The client's video list, and sending selected videos (or all)
+    api/bot/webhook               Telegram bot webhook (/start, /videos, inline Get buttons)
     api/admin/*                   Admin API (permission-checked)
   components/                     Shared UI: admin widgets, confirm dialog, toasts, tab guard
   lib/
@@ -198,6 +224,7 @@ src/
     elefin.ts                     Elefin lookup and eligibility rules
     telegram.ts                   Bot API calls and video permission checks
     telegram-oauth.ts             Telegram Login: PKCE, token exchange, ID token check
+    bot.ts                        Bot replies: video list, Get buttons, sending pending videos
     members.ts                    Member records, Telegram linking and video delivery
     email.ts, otp.ts              Resend emails and OTP codes
   proxy.ts                        Redirects signed-out visitors away from /admin
@@ -208,12 +235,12 @@ scripts/migrate.mjs               npm run db:migrate
 
 ## Troubleshooting
 
-| Problem | Fix |
-| --- | --- |
-| Client page says Telegram login isn't available | Set both **Login client ID** and **Login client secret** in Settings → Telegram bot, then refresh the page. |
-| Telegram shows an error about the redirect URI | Register the exact **Redirect URI** from Settings → Telegram bot in @BotFather → Login Widget, and open the site on that same domain. |
-| A video shows **Needs attention** | Make sure the bot is an **administrator** of the channel, then click **Check permissions** in the video's ⋯ menu. The full error is in the status tooltip. |
-| "The bot can't message you" during delivery | The client must approve messages from the bot when logging in with Telegram, or open the bot and press **Start**. |
-| No OTP email arrives | Check the Resend key and that the **From email** is on a domain verified in Resend. Use **Send test** in Settings. In dev, look in the `DEV_EMAIL` inbox. |
-| `npm run build` fails reading the config or tsconfig paths | Keep TypeScript on version 5 (`typescript@5`); Next 16 doesn't support TypeScript 7 yet. |
-# Exclusive-videos
+| Problem                                                    | Fix                                                                                                                                                        |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client page says Telegram login isn't available            | Set both **Login client ID** and **Login client secret** in Settings → Telegram bot, then refresh the page.                                                |
+| Telegram shows an error about the redirect URI             | Register the exact **Redirect URI** from Settings → Telegram bot in @BotFather → Login Widget, and open the site on that same domain.                      |
+| The bot doesn't reply to /start or /videos                 | Settings → Telegram bot → **Bot webhook** must say **Connected**. Open the admin through your public HTTPS address and click **Connect webhook**.          |
+| A video shows **Needs attention**                          | Make sure the bot is an **administrator** of the channel, then click **Check permissions** in the video's ⋯ menu. The full error is in the status tooltip. |
+| "The bot can't message you" during delivery                | The client must approve messages from the bot when logging in with Telegram, or open the bot and press **Start**.                                          |
+| No OTP email arrives                                       | Check the Resend key and that the **From email** is on a domain verified in Resend. Use **Send test** in Settings. In dev, look in the `DEV_EMAIL` inbox.  |
+| `npm run build` fails reading the config or tsconfig paths | Keep TypeScript on version 5 (`typescript@5`); Next 16 doesn't support TypeScript 7 yet.                                                                   |

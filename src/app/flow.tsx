@@ -436,85 +436,179 @@ function TelegramIcon() {
 }
 
 /* ---------------- Step 4: Deliver ---------------- */
+interface VideoItem {
+  id: number;
+  title: string;
+  status: "available" | "cooldown" | "sent";
+  lastSentAt: string | null;
+  availableAt: string | null;
+}
+
+function waitLabel(iso: string) {
+  const mins = Math.max(1, Math.ceil((new Date(iso).getTime() - Date.now()) / 60_000));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return mins % 60 ? `${h} h ${mins % 60} min` : `${h} h`;
+}
+
 function DeliverStep({ botUsername, member, onDelivered, onBack }: { botUsername: string; member: Member; onDelivered: (at: string) => void; onBack: () => void }) {
-  const [loading, setLoading] = useState(false);
+  const [videos, setVideos] = useState<VideoItem[] | null>(null);
+  const [sending, setSending] = useState<number | "all" | null>(null);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
-  const tg = member.telegram!;
+  const [openingBot, setOpeningBot] = useState<string | null>(null);
+  const [, tick] = useState(0);
+  const toast = useToast();
+  const tgUser = member.telegram!;
   const botLink = botUsername ? `https://t.me/${botUsername}` : null;
 
-  async function deliver() {
-    setLoading(true);
-    setError("");
+  const load = useCallback(async () => {
     try {
-      const r = await api<{ report: { sent: number; failed: number } }>("/api/deliver", { body: {} });
-      setResult(r.report);
-      onDelivered(new Date().toISOString());
+      const r = await api<{ videos: VideoItem[] }>("/api/videos");
+      setVideos(r.videos);
     } catch (err) {
       setError((err as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Keep cooldown countdowns fresh, and reload once a video becomes available again.
+  useEffect(() => {
+    const t = setInterval(() => {
+      tick((n) => n + 1);
+      if (videos?.some((v) => v.status === "cooldown" && v.availableAt && new Date(v.availableAt).getTime() <= Date.now())) load();
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [videos, load]);
+
+  async function deliver(target: number | "all") {
+    setSending(target);
+    setError("");
+    try {
+      const r = await api<{ report: { sent: number; failed: number; skipped: number }; videos: VideoItem[] }>("/api/deliver", {
+        body: target === "all" ? {} : { videoIds: [target] },
+      });
+      setVideos(r.videos);
+      onDelivered(new Date().toISOString());
+      const { sent, failed } = r.report;
+      toast(
+        `${sent} video${sent === 1 ? "" : "s"} sent to your Telegram${failed ? `, ${failed} couldn't be sent` : ""}.`,
+        failed ? "info" : "success"
+      );
+    } catch (err) {
+      // The bot hasn't been started yet: send the user to it. Pressing Start delivers the requested videos.
+      if (err instanceof ApiError && err.data.code === "need_start" && typeof err.data.botUrl === "string") {
+        setOpeningBot(err.data.botUrl);
+        setTimeout(() => window.location.assign(err.data.botUrl as string), 900);
+        return;
+      }
+      setError((err as Error).message);
+      if (err instanceof ApiError && Array.isArray(err.data.videos)) setVideos(err.data.videos as VideoItem[]);
     } finally {
-      setLoading(false);
+      setSending(null);
     }
   }
 
-  if (result) {
+  if (openingBot) {
     return (
       <div>
-        <Heading title="Videos sent">
-          {result.sent} video{result.sent === 1 ? " is" : "s are"} waiting in your Telegram chat
-          {result.failed ? ` (${result.failed} couldn't be sent — try again later)` : ""}. Enjoy the mentorship.
+        <Heading title="Open Telegram to continue">
+          Press <span className="text-white">Start</span> in the bot and your videos will be sent straight away. Opening Telegram…
         </Heading>
-        {botLink && (
-          <a href={botLink} target="_blank" rel="noreferrer" className="ef-btn">
-            Open @{botUsername}
-          </a>
-        )}
+        <a href={openingBot} className="ef-btn">
+          Open @{botUsername}
+        </a>
         <Footer>
           <p>
-            Done here? <TextButton onClick={onBack}>Sign out</TextButton>.
+            Telegram didn&apos;t open? Use the button above, then come back here any time. <TextButton onClick={() => setOpeningBot(null)}>Back to videos</TextButton>.
           </p>
         </Footer>
       </div>
     );
   }
 
+  const available = videos?.filter((v) => v.status === "available") ?? [];
+
   return (
     <div>
-      <Heading title="You're all set">Your account is verified and Telegram is connected. Get the full mentorship series delivered to your chat.</Heading>
+      <Heading title="Your videos">Choose a video to receive it in your Telegram chat, or get everything that&apos;s available at once.</Heading>
 
-      <label className="ef-label">Delivering to</label>
-      <div className="ef-input flex items-center gap-3">
-        {tg.photoUrl ? (
+      <div className="mb-4 flex items-center gap-3 rounded-xl border border-[#262c3b] bg-[#11151f] px-4 py-3">
+        {tgUser.photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={tg.photoUrl} alt="" className="h-8 w-8 rounded-full" />
+          <img src={tgUser.photoUrl} alt="" className="h-8 w-8 rounded-full" />
         ) : (
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-[#0a47ec]/25 text-[14px] text-[#9db4ff]">{(tg.name || "?")[0]}</span>
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-[#0a47ec]/25 text-[14px] text-[#9db4ff]">{(tgUser.name || "?")[0]}</span>
         )}
-        <span className="min-w-0 flex-1 truncate">{tg.name || "Telegram user"}</span>
-        <span className="truncate text-[14px] text-[#8a91a0]">{tg.username ? `@${tg.username}` : tg.id}</span>
+        <span className="min-w-0 flex-1 truncate text-[15px] text-[#e7e9ee]">{tgUser.name || "Telegram user"}</span>
+        <span className="truncate text-[13px] text-[#8a91a0]">{tgUser.username ? `@${tgUser.username}` : tgUser.id}</span>
       </div>
 
-      {error && (
-        <ErrorText>
-          {error}
-          {botLink && /bot|Start/i.test(error) && (
-            <>
-              {" "}
-              <a href={botLink} target="_blank" rel="noreferrer" className="ef-link">
-                Open @{botUsername}
-              </a>
-            </>
-          )}
-        </ErrorText>
+      {!videos ? (
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-[#262c3b] py-10 text-[14px] text-[#8a91a0]">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading videos…
+        </div>
+      ) : videos.length === 0 ? (
+        <p className="rounded-xl border border-[#262c3b] px-4 py-8 text-center text-[14px] text-[#a3a9b6]">No videos are available yet. Please check back soon.</p>
+      ) : (
+        <ul className="divide-y divide-[#262c3b] overflow-hidden rounded-xl border border-[#262c3b]">
+          {videos.map((v, i) => {
+            const busy = sending === v.id || (sending === "all" && v.status === "available");
+            return (
+              <li key={v.id} className="flex items-center gap-3 px-4 py-3.5">
+                <span className="w-5 shrink-0 text-[13px] tabular-nums text-[#6b7282]">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[15px] text-white">{v.title}</div>
+                  <div className="mt-0.5 text-[13px] text-[#8a91a0]">
+                    {v.status === "available"
+                      ? v.lastSentAt
+                        ? "Available again"
+                        : "Not received yet"
+                      : v.status === "cooldown"
+                        ? `Sent · available again in ${waitLabel(v.availableAt!)}`
+                        : "Sent to your Telegram"}
+                  </div>
+                </div>
+                {v.status === "available" ? (
+                  <button
+                    onClick={() => deliver(v.id)}
+                    disabled={sending !== null}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-[#0a47ec] px-4 text-[14px] font-medium text-white transition hover:bg-[#1f57f5] disabled:opacity-50"
+                  >
+                    {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Get
+                  </button>
+                ) : (
+                  <span className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[#2c3343] px-3.5 text-[13px] text-[#8a91a0]">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Sent
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
 
-      <button onClick={deliver} disabled={loading} className="ef-btn mt-11">
-        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-        {loading ? "Sending videos…" : "Get my videos"}
-      </button>
+      {error && <ErrorText>{error}</ErrorText>}
+
+      {videos && videos.length > 0 && (
+        <button onClick={() => deliver("all")} disabled={sending !== null || available.length === 0} className="ef-btn mt-6">
+          {sending === "all" && <Loader2 className="h-4 w-4 animate-spin" />}
+          {sending === "all" ? "Sending videos…" : available.length ? `Get all (${available.length})` : "Nothing new to get"}
+        </button>
+      )}
 
       <Footer>
-        {member.lastDeliveredAt && <p>Last delivered {new Date(member.lastDeliveredAt).toLocaleString()}.</p>}
+        {botLink && (
+          <p>
+            Videos arrive in your chat with{" "}
+            <a href={botLink} target="_blank" rel="noreferrer" className="ef-link">
+              @{botUsername}
+            </a>
+            . New videos appear here as they&apos;re added.
+          </p>
+        )}
         <p>
           Signed in as {member.email}. <TextButton onClick={onBack}>Sign out</TextButton>.
         </p>

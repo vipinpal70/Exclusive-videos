@@ -23,6 +23,8 @@ export interface Member {
   telegram_linked_at: Date | null;
   deliveries_count: number;
   last_delivered_at: Date | null;
+  pending_video_ids: string | null;
+  delivery_reset_at: Date | null;
   is_blocked: number;
   created_at: Date;
 }
@@ -93,54 +95,150 @@ export interface Video {
 
 export const activeVideos = () => query<Video>("SELECT * FROM videos WHERE is_active = 1 ORDER BY sort_order ASC, id ASC");
 
+export type VideoStatus = "available" | "cooldown" | "sent";
+
+export interface MemberVideo {
+  id: number;
+  title: string;
+  status: VideoStatus;
+  /** Last successful delivery to this member (since the last admin reset). */
+  lastSentAt: Date | null;
+  /** When a video in cooldown can be requested again. */
+  availableAt: Date | null;
+}
+
 export interface DeliveryReport {
   sent: number;
   failed: number;
-  results: { videoId: number; title: string; ok: boolean; error?: string }[];
+  skipped: number;
+  results: { videoId: number; title: string; ok: boolean; skipped?: boolean; error?: string }[];
 }
 
-/** Checks whether the member may receive videos now. Returns an error message or null. */
-export function deliveryBlockReason(m: Member, s: Settings): string | null {
+export class DeliveryError extends Error {
+  constructor(
+    message: string,
+    public code: "need_start" | "nothing_available" | "no_videos",
+    /** For need_start: the videos that still need to be sent once the user starts the bot. */
+    public pendingIds: number[] = []
+  ) {
+    super(message);
+  }
+}
+
+/** Member-level checks (not per video). Returns an error message or null. */
+export function deliveryBlockReason(m: Member): string | null {
   if (m.is_blocked) return "Your access has been disabled. Please contact support.";
   if (!m.eligible) return "Your account is not eligible.";
   if (!m.telegram_id) return "Connect your Telegram account first.";
-  if (m.last_delivered_at) {
-    if (!bool(s.allow_redelivery)) return "The videos have already been delivered to your Telegram. Check your chat with the bot.";
-    const cooldown = Number(s.redelivery_cooldown_minutes) || 0;
-    const nextAt = new Date(m.last_delivered_at).getTime() + cooldown * 60_000;
-    if (Date.now() < nextAt) {
-      const mins = Math.ceil((nextAt - Date.now()) / 60_000);
-      return `Videos were just delivered. You can request them again in ${mins} minute${mins === 1 ? "" : "s"}.`;
-    }
-  }
   return null;
 }
 
-export async function deliverVideos(m: Member, s: Settings): Promise<DeliveryReport> {
+/** Active videos with this member's per-video availability (re-delivery and cooldown rules apply to each video). */
+export async function memberVideos(m: Member, s: Settings): Promise<MemberVideo[]> {
+  const videos = await activeVideos();
+  const rows = await query<{ video_id: number; last: Date }>(
+    `SELECT video_id, MAX(created_at) AS last FROM deliveries
+     WHERE member_id = ? AND status = 'sent' AND video_id IS NOT NULL AND (? IS NULL OR created_at > ?)
+     GROUP BY video_id`,
+    [m.id, m.delivery_reset_at, m.delivery_reset_at]
+  );
+  const lastSent = new Map(rows.map((r) => [Number(r.video_id), new Date(r.last)]));
+  const allowAgain = bool(s.allow_redelivery);
+  const cooldownMs = Math.max(0, Number(s.redelivery_cooldown_minutes) || 0) * 60_000;
+  const now = Date.now();
+
+  return videos.map((v): MemberVideo => {
+    const last = lastSent.get(v.id) ?? null;
+    if (!last) return { id: v.id, title: v.title, status: "available", lastSentAt: null, availableAt: null };
+    if (!allowAgain) return { id: v.id, title: v.title, status: "sent", lastSentAt: last, availableAt: null };
+    const nextAt = last.getTime() + cooldownMs;
+    return nextAt > now
+      ? { id: v.id, title: v.title, status: "cooldown", lastSentAt: last, availableAt: new Date(nextAt) }
+      : { id: v.id, title: v.title, status: "available", lastSentAt: last, availableAt: null };
+  });
+}
+
+/** Telegram errors that mean the user hasn't started the bot (or blocked it), which pressing Start fixes. */
+export function needsBotStart(e: unknown) {
+  if (!(e instanceof TelegramError)) return false;
+  return e.code === 403 || /chat not found|can't initiate conversation|cannot initiate conversation|bot was blocked by the user/i.test(e.message);
+}
+
+export function minutesLabel(ms: number) {
+  const mins = Math.max(1, Math.ceil(ms / 60_000));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const rest = mins % 60;
+  return rest ? `${h} h ${rest} min` : `${h} h`;
+}
+
+// One delivery at a time per member, so double clicks or bot + website requests can't send twice.
+const inFlight = new Set<number>();
+
+/**
+ * Sends videos to the member's Telegram.
+ * - `videoIds` omitted = "Get all" (every available video, wrapped in the intro/outro messages).
+ * - `force` (admin "Send videos now") ignores the re-delivery and cooldown rules.
+ * Throws DeliveryError("need_start") when the user must press Start in the bot first.
+ */
+export async function deliverVideos(m: Member, s: Settings, opts: { videoIds?: number[]; force?: boolean } = {}): Promise<DeliveryReport> {
+  if (inFlight.has(m.id)) throw new Error("A delivery is already in progress. Please wait a moment.");
+  inFlight.add(m.id);
+  try {
+    return await runDelivery(m, s, opts);
+  } finally {
+    inFlight.delete(m.id);
+  }
+}
+
+async function runDelivery(m: Member, s: Settings, opts: { videoIds?: number[]; force?: boolean }): Promise<DeliveryReport> {
   const token = s.telegram_bot_token;
   const chatId = m.telegram_id!;
-  const videos = await activeVideos();
-  if (!videos.length) throw new Error("No videos are available yet. Please check back later.");
+  const all = await memberVideos(m, s);
+  if (!all.length) throw new DeliveryError("No videos are available yet. Please check back later.", "no_videos");
 
+  const wanted = opts.videoIds ? all.filter((v) => opts.videoIds!.includes(v.id)) : all;
+  const toSend = opts.force ? wanted : wanted.filter((v) => v.status === "available");
+  const report: DeliveryReport = { sent: 0, failed: 0, skipped: 0, results: [] };
+  for (const v of wanted) {
+    if (toSend.includes(v)) continue;
+    report.skipped++;
+    report.results.push({
+      videoId: v.id,
+      title: v.title,
+      ok: false,
+      skipped: true,
+      error: v.status === "cooldown" ? `Available again in ${minutesLabel(v.availableAt!.getTime() - Date.now())}` : "Already sent",
+    });
+  }
+  if (!toSend.length) {
+    const one = wanted.length === 1 ? wanted[0] : null;
+    const msg =
+      one?.status === "cooldown"
+        ? `You can request "${one.title}" again in ${minutesLabel(one.availableAt!.getTime() - Date.now())}.`
+        : one
+          ? `"${one.title}" has already been sent to your Telegram.`
+          : "There are no videos available to send right now. Check your Telegram chat for the ones already sent.";
+    throw new DeliveryError(msg, "nothing_available");
+  }
+
+  const byId = new Map((await activeVideos()).map((v) => [v.id, v]));
   const protect = bool(s.telegram_protect_content);
-  const report: DeliveryReport = { sent: 0, failed: 0, results: [] };
+  const getAll = !opts.videoIds;
+  const notStarted = (remaining: number[]) =>
+    new DeliveryError("Open the bot in Telegram and press Start, then your videos will be sent automatically.", "need_start", remaining);
 
-  if (s.telegram_intro_message?.trim()) {
+  if (getAll && s.telegram_intro_message?.trim()) {
     try {
       await tg(token, "sendMessage", { chat_id: chatId, text: s.telegram_intro_message, parse_mode: "HTML", protect_content: protect });
     } catch (e) {
-      // If the very first message fails because the user blocked the bot, abort early with a clear message.
-      if (e instanceof TelegramError && e.code === 403) throw new Error("The bot can't message you. Open the bot in Telegram, press Start, then try again.");
+      if (needsBotStart(e)) throw notStarted(toSend.map((v) => v.id));
     }
   }
 
-  for (const v of videos) {
-    const params: Record<string, unknown> = {
-      chat_id: chatId,
-      from_chat_id: v.from_chat_id,
-      message_id: Number(v.message_id),
-      protect_content: protect,
-    };
+  for (let i = 0; i < toSend.length; i++) {
+    const v = byId.get(toSend[i].id)!;
+    const params: Record<string, unknown> = { chat_id: chatId, from_chat_id: v.from_chat_id, message_id: Number(v.message_id), protect_content: protect };
     if (v.caption?.trim()) {
       params.caption = v.caption;
       params.parse_mode = "HTML";
@@ -156,6 +254,8 @@ export async function deliverVideos(m: Member, s: Settings): Promise<DeliveryRep
         res.message_id,
       ]);
     } catch (e) {
+      // The user hasn't started the bot: nothing more will get through, so hand the rest over to the bot.
+      if (needsBotStart(e)) throw notStarted(toSend.slice(i).map((x) => x.id));
       const msg = (e as Error).message;
       report.failed++;
       report.results.push({ videoId: v.id, title: v.title, ok: false, error: msg });
@@ -165,21 +265,35 @@ export async function deliverVideos(m: Member, s: Settings): Promise<DeliveryRep
         chatId,
         msg.slice(0, 1000),
       ]);
-      if (e instanceof TelegramError && e.code === 403) {
-        throw new Error("The bot can't message you. Open the bot in Telegram, press Start, then try again.");
-      }
     }
     await new Promise((r) => setTimeout(r, 60)); // stay well under Telegram's per-chat rate limit
   }
 
-  if (report.sent > 0 && s.telegram_outro_message?.trim()) {
+  if (getAll && report.sent > 0 && s.telegram_outro_message?.trim()) {
     await tg(token, "sendMessage", { chat_id: chatId, text: s.telegram_outro_message, parse_mode: "HTML", protect_content: protect }).catch(() => {});
   }
-
   if (report.sent > 0) {
     await execute("UPDATE members SET deliveries_count = deliveries_count + 1, last_delivered_at = UTC_TIMESTAMP() WHERE id = ?", [m.id]);
   }
   return report;
+}
+
+/** Remember which videos to send once the user presses Start in the bot. */
+export async function setPendingVideos(memberId: number, ids: number[] | null) {
+  await execute("UPDATE members SET pending_video_ids = ? WHERE id = ?", [ids?.length ? JSON.stringify(ids) : null, memberId]);
+}
+
+export function pendingVideoIds(m: Member): number[] {
+  try {
+    const list = JSON.parse(m.pending_video_ids ?? "[]");
+    return Array.isArray(list) ? list.map(Number).filter(Number.isInteger) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function botStartUrl(s: Settings) {
+  return s.telegram_bot_username ? `https://t.me/${s.telegram_bot_username}?start=video` : null;
 }
 
 export function publicMember(m: Member, emailVerified: boolean) {

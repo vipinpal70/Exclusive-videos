@@ -11,6 +11,8 @@ export interface SettingDef {
   default: string;
   help?: string;
   placeholder?: string;
+  /** Internal value managed by the app; not shown or editable in the settings form. */
+  internal?: boolean;
 }
 
 export const SETTING_DEFS: SettingDef[] = [
@@ -44,14 +46,14 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "require_affiliated", label: "Require client to be affiliated", type: "boolean", group: "eligibility", default: "1", help: "Reject clients that are not under your referral (affiliated = false)." },
   { key: "require_active", label: "Require active status", type: "boolean", group: "eligibility", default: "0", help: "Reject clients whose status is not \"active\"." },
   { key: "min_net_deposit", label: "Minimum net deposit (USD)", type: "number", group: "eligibility", default: "0", help: "0 disables this check." },
-  { key: "allow_redelivery", label: "Allow users to request videos again", type: "boolean", group: "eligibility", default: "1", help: "If off, each user can receive the videos only once (admins can reset)." },
+  { key: "allow_redelivery", label: "Allow users to request videos again", type: "boolean", group: "eligibility", default: "1", help: "Applies to each video. If off, each user can receive every video only once (admins can reset). New videos can always be requested." },
   {
     key: "redelivery_cooldown_minutes",
     label: "Re-delivery cooldown (minutes)",
     type: "number",
     group: "eligibility",
     default: "60",
-    help: "How long a user must wait after a delivery before requesting the videos again. Only applies when re-delivery is allowed. 0 means no wait.",
+    help: "Per video: how long a user must wait after receiving a video before requesting that video again. Only applies when re-delivery is allowed. 0 means no wait.",
   },
 
   // Telegram
@@ -100,6 +102,10 @@ export const SETTING_DEFS: SettingDef[] = [
     default: "10",
     help: "How long a verification code stays valid. Requesting a new code cancels the previous one.",
   },
+
+  // Internal: set by the app when the bot webhook is connected.
+  { key: "telegram_webhook_secret", label: "Webhook secret", type: "secret", group: "telegram", default: "", internal: true },
+  { key: "public_site_url", label: "Public site URL", type: "url", group: "general", default: "", internal: true },
 ];
 
 const DEF_MAP = new Map(SETTING_DEFS.map((d) => [d.key, d]));
@@ -141,7 +147,7 @@ export function maskSecret(v: string) {
 /** Settings safe to send to the admin UI (secrets masked). */
 export async function getSettingsForAdmin() {
   const s = await getSettings();
-  return SETTING_DEFS.map((d) => ({
+  return SETTING_DEFS.filter((d) => !d.internal).map((d) => ({
     ...d,
     value: d.type === "secret" ? "" : s[d.key],
     isSet: !!s[d.key],

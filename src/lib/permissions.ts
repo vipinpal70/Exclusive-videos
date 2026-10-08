@@ -8,6 +8,7 @@ export const PERMISSIONS = [
   { key: "settings.telegram", label: "Edit Telegram bot settings", desc: "Bot token, test chat, delivery messages and content protection." },
   { key: "videos.manage", label: "Add and edit videos", desc: "Add, edit, reorder, activate, verify and delete videos." },
   { key: "members.manage", label: "Edit members", desc: "Send videos, reset delivery, unlink Telegram, block and delete members." },
+  { key: "broadcast.send", label: "Bulk send videos", desc: "Send videos to every eligible member with Telegram linked, from the Members page." },
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number]["key"];

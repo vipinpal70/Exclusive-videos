@@ -99,6 +99,15 @@ export const SCHEMA = [
 const COLUMNS = [
   { table: "admins", column: "is_super", ddl: "ALTER TABLE admins ADD COLUMN is_super TINYINT(1) NOT NULL DEFAULT 0 AFTER password_hash" },
   { table: "admins", column: "permissions", ddl: "ALTER TABLE admins ADD COLUMN permissions TEXT NULL AFTER is_super" },
+  // Videos requested on the website while the bot couldn't message the user yet; sent when they press Start in the bot.
+  { table: "members", column: "pending_video_ids", ddl: "ALTER TABLE members ADD COLUMN pending_video_ids TEXT NULL AFTER last_delivered_at" },
+  // Deliveries before this time are ignored for re-delivery rules (admin "Reset delivery").
+  { table: "members", column: "delivery_reset_at", ddl: "ALTER TABLE members ADD COLUMN delivery_reset_at DATETIME NULL AFTER pending_video_ids" },
+];
+
+const INDEXES = [
+  // Per-video cooldown lookups: last successful delivery of each video to a member.
+  { table: "deliveries", name: "idx_deliveries_member_video", ddl: "CREATE INDEX idx_deliveries_member_video ON deliveries (member_id, video_id, status, created_at)" },
 ];
 
 /** Applies column migrations and data fixes. `run(sql, params)` must return rows for SELECTs. */
@@ -109,6 +118,13 @@ export async function migrate(run) {
       [c.table, c.column]
     );
     if (Number(rows[0].c) === 0) await run(c.ddl, []);
+  }
+  for (const i of INDEXES) {
+    const rows = await run(
+      "SELECT COUNT(*) AS c FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?",
+      [i.table, i.name]
+    );
+    if (Number(rows[0].c) === 0) await run(i.ddl, []);
   }
   // Installs that predate permissions: the oldest admin becomes the super admin.
   const supers = await run("SELECT COUNT(*) AS c FROM admins WHERE is_super = 1", []);

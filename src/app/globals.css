@@ -35,6 +35,17 @@ body {
   }
 }
 
+/* Hide the up/down spinner on number inputs in every browser. */
+input[type="number"] {
+  -moz-appearance: textfield; /* Firefox */
+  appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none; /* Chrome, Edge, Safari, Opera */
+  margin: 0;
+}
+
 ::selection {
   background: rgb(61 116 255 / 0.35);
 }
