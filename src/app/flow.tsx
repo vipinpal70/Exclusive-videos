@@ -1,0 +1,524 @@
+"use client";
+
+import { CheckCircle2, ChevronLeft, Loader2, Mail } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useToast } from "@/components/toast";
+import { api, ApiError } from "@/lib/api";
+
+interface PublicSettings {
+  siteName: string;
+  heroTitle: string;
+  heroSubtitle: string;
+  signupUrl: string;
+  supportUrl: string;
+  otpEnabled: boolean;
+  botUsername: string;
+  telegramLoginReady: boolean;
+  minLots: number;
+  videoCount: number;
+}
+
+interface Member {
+  email: string;
+  name: string | null;
+  lots: number;
+  eligible: boolean;
+  emailVerified: boolean;
+  telegram: { id: string; username: string | null; name: string | null; photoUrl: string | null } | null;
+  lastDeliveredAt: string | null;
+}
+
+interface Rejection {
+  message: string;
+  code?: string;
+  lots?: number;
+  minLots?: number;
+  signupUrl?: string | null;
+}
+
+type Step = "email" | "otp" | "telegram" | "deliver";
+
+function stepOf(m: Member | null): Step {
+  if (!m) return "email";
+  if (!m.emailVerified) return "otp";
+  if (!m.telegram) return "telegram";
+  return "deliver";
+}
+
+export function Flow({ settings, initialMember }: { settings: PublicSettings; initialMember: Member | null }) {
+  const [member, setMember] = useState<Member | null>(initialMember);
+  const [rejection, setRejection] = useState<Rejection | null>(null);
+  const [tgError, setTgError] = useState("");
+  const toast = useToast();
+  const step = stepOf(member);
+
+  // Telegram Login redirects back here with ?tg=linked or ?tg_error=...; show the result and tidy the URL.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (!q.has("tg") && !q.has("tg_error")) return;
+    if (q.get("tg_error")) setTgError(q.get("tg_error")!);
+    else if (q.get("tg_msg") === "0") toast(`Open @${settings.botUsername} in Telegram and press Start so we can send you the videos.`, "info");
+    else if (q.get("tg") === "linked") toast("Telegram connected.", "success");
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [toast, settings.botUsername]);
+
+  const steps: Step[] = settings.otpEnabled ? ["email", "otp", "telegram", "deliver"] : ["email", "telegram", "deliver"];
+  const idx = steps.indexOf(step);
+
+  async function reset() {
+    await fetch("/api/logout", { method: "POST" });
+    setMember(null);
+    setRejection(null);
+  }
+
+  return (
+    <div className="ef-page flex min-h-screen flex-col">
+      <header className="flex items-center justify-between px-6 py-7 sm:px-[60px]">
+        <span className="text-[18px] font-medium leading-none tracking-[-0.02em] text-white">{settings.siteName}</span>
+        {settings.supportUrl && (
+          <a href={settings.supportUrl} target="_blank" rel="noreferrer" className="ef-nav">
+            <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2.5} /> Support
+          </a>
+        )}
+      </header>
+
+      <main className="flex flex-1 items-start justify-center px-6 pb-16 pt-10 sm:pt-[100px]">
+        <div className="w-full max-w-[456px]">
+          {!rejection && (
+            <div className="mb-6 flex items-center gap-1.5">
+              {steps.map((s, i) => (
+                <span key={s} className={`h-[3px] flex-1 rounded-full transition-colors ${i <= idx ? "bg-[#0a47ec]" : "bg-[#262c3b]"}`} />
+              ))}
+            </div>
+          )}
+
+          <div key={rejection ? "rej" : step} className="animate-fade-up">
+            {rejection ? (
+              <RejectionView r={rejection} onBack={() => setRejection(null)} />
+            ) : step === "email" ? (
+              <EmailStep settings={settings} onDone={setMember} onReject={setRejection} />
+            ) : step === "otp" ? (
+              <OtpStep email={member!.email} onDone={setMember} onBack={reset} />
+            ) : step === "telegram" ? (
+              <TelegramStep ready={settings.telegramLoginReady} member={member!} error={tgError} onBack={reset} />
+            ) : (
+              <DeliverStep
+                botUsername={settings.botUsername}
+                member={member!}
+                onDelivered={(at) => setMember({ ...member!, lastDeliveredAt: at })}
+                onBack={reset}
+              />
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+/* ---------------- shared bits ---------------- */
+
+function Heading({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <div className="mb-9">
+      <h1 className="ef-title">{title}</h1>
+      {children && <p className="ef-sub">{children}</p>}
+    </div>
+  );
+}
+
+function ErrorText({ children }: { children: React.ReactNode }) {
+  return <p className="mt-4 rounded-xl border border-[#5c2a33] bg-[#2a1419] px-4 py-3 text-[14px] leading-relaxed text-[#f3b7c0]">{children}</p>;
+}
+
+function Footer({ children }: { children: React.ReactNode }) {
+  return <div className="mt-7 space-y-2.5 border-t border-[#262c3b] pt-6 text-[14px] leading-[1.55] text-[#a3a9b6]">{children}</div>;
+}
+
+function TextButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="ef-link">
+      {children}
+    </button>
+  );
+}
+
+/* ---------------- Step 1: email ---------------- */
+function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; onDone: (m: Member) => void; onReject: (r: Rejection) => void }) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const r = await api<{ member: Member }>("/api/verify/email", { body: { email } });
+      onDone(r.member);
+    } catch (err) {
+      if (err instanceof ApiError && ["not_found", "not_eligible", "blocked"].includes(String(err.data.code))) {
+        onReject({ message: err.message, ...(err.data as Omit<Rejection, "message">) });
+      } else setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <Heading title={settings.heroTitle}>{settings.heroSubtitle}</Heading>
+
+      <label className="ef-label" htmlFor="email">
+        Email address
+      </label>
+      <div className="relative">
+        <Mail className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+        <input
+          id="email"
+          type="email"
+          required
+          autoFocus
+          autoComplete="email"
+          placeholder="you@example.com"
+          className="ef-input h-12 pl-11 text-[16px]"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </div>
+      {error && <ErrorText>{error}</ErrorText>}
+
+      <button className="ef-btn mt-11" disabled={loading}>
+        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+        {loading ? "Checking your account…" : "Continue"}
+      </button>
+
+      <Footer>
+        <p>
+          Use the email of your Elefin trading account. You need at least {settings.minLots} traded lot{settings.minLots === 1 ? "" : "s"} to unlock
+          {settings.videoCount > 1 ? ` all ${settings.videoCount} videos` : settings.videoCount === 1 ? " the video" : " the videos"}.
+        </p>
+        {settings.signupUrl && (
+          <p>
+            Not an Elefin client yet?{" "}
+            <a href={settings.signupUrl} target="_blank" rel="noreferrer" className="ef-link">
+              Open an Elefin account
+            </a>
+            .
+          </p>
+        )}
+      </Footer>
+    </form>
+  );
+}
+
+function RejectionView({ r, onBack }: { r: Rejection; onBack: () => void }) {
+  const showProgress = r.code === "not_eligible" && r.minLots !== undefined && r.lots !== undefined && r.lots < r.minLots;
+  const pct = showProgress ? Math.min(100, ((r.lots ?? 0) / r.minLots!) * 100) : 0;
+  return (
+    <div>
+      <Heading title={r.code === "not_found" ? "Account not found" : r.code === "blocked" ? "Access disabled" : "Not eligible yet"}>{r.message}</Heading>
+
+      {showProgress && (
+        <div className="mb-9">
+          <div className="ef-label flex justify-between">
+            <span>Traded volume</span>
+            <span className="text-white">
+              {r.lots} / {r.minLots} lots
+            </span>
+          </div>
+          <div className="h-[6px] overflow-hidden rounded-full bg-[#262c3b]">
+            <div className="h-full rounded-full bg-[#0a47ec]" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {r.signupUrl && r.code !== "blocked" ? (
+        <a href={r.signupUrl} target="_blank" rel="noreferrer" className="ef-btn">
+          {r.code === "not_found" ? "Open an Elefin account" : "Continue trading on Elefin"}
+        </a>
+      ) : null}
+
+      <Footer>
+        <p>
+          Used a different email with Elefin? <TextButton onClick={onBack}>Try another email</TextButton>.
+        </p>
+      </Footer>
+    </div>
+  );
+}
+
+/* ---------------- Step 2: OTP ---------------- */
+function OtpStep({ email, onDone, onBack }: { email: string; onDone: (m: Member) => void; onBack: () => void }) {
+  const [digits, setDigits] = useState<string[]>(Array(6).fill(""));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [cooldown, setCooldown] = useState(60);
+  const refs = useRef<(HTMLInputElement | null)[]>([]);
+  const toast = useToast();
+
+  useEffect(() => {
+    refs.current[0]?.focus();
+  }, []);
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  async function verify(code: string) {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await api<{ member: Member }>("/api/verify/otp", { body: { code } });
+      onDone(r.member);
+    } catch (err) {
+      setError((err as Error).message);
+      setDigits(Array(6).fill(""));
+      refs.current[0]?.focus();
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function setAt(i: number, v: string) {
+    const clean = v.replace(/\D/g, "");
+    if (clean.length > 1) {
+      const next = clean.slice(0, 6).split("");
+      while (next.length < 6) next.push("");
+      setDigits(next);
+      if (clean.length >= 6) verify(clean.slice(0, 6));
+      else refs.current[clean.length]?.focus();
+      return;
+    }
+    const next = [...digits];
+    next[i] = clean;
+    setDigits(next);
+    if (clean && i < 5) refs.current[i + 1]?.focus();
+    if (next.every((d) => d)) verify(next.join(""));
+  }
+
+  async function resend() {
+    try {
+      await api("/api/verify/resend", { body: {} });
+      toast("A new code has been sent.", "success");
+      setCooldown(60);
+    } catch (err) {
+      const ra = err instanceof ApiError ? Number(err.data.retryAfter) : 0;
+      if (ra) setCooldown(ra);
+      toast((err as Error).message, "error");
+    }
+  }
+
+  return (
+    <div>
+      <Heading title="Check your inbox">
+        We sent a 6-digit code to <span className="text-white">{email}</span>. Enter it below to confirm the email is yours.
+      </Heading>
+
+      <label className="ef-label">Verification code</label>
+      <div className="flex gap-2 sm:gap-2.5">
+        {digits.map((d, i) => (
+          <input
+            key={i}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            inputMode="numeric"
+            autoComplete={i === 0 ? "one-time-code" : "off"}
+            maxLength={6}
+            value={d}
+            disabled={loading}
+            onChange={(e) => setAt(i, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Backspace" && !digits[i] && i > 0) refs.current[i - 1]?.focus();
+            }}
+            className="ef-input min-w-0 px-0 text-center text-[22px] font-normal"
+          />
+        ))}
+      </div>
+      {error && <ErrorText>{error}</ErrorText>}
+
+      <button className="ef-btn mt-11" disabled={loading || digits.some((d) => !d)} onClick={() => verify(digits.join(""))}>
+        {loading && <Loader2 className="h-4 w-4 animate-spin" />} Verify
+      </button>
+
+      <Footer>
+        <p>
+          Didn&apos;t get it? Check your spam folder, or{" "}
+          {cooldown > 0 ? <span className="text-[#6b7282]">resend in {cooldown}s</span> : <TextButton onClick={resend}>send a new code</TextButton>}.
+        </p>
+        <p>
+          Wrong email? <TextButton onClick={onBack}>Start again</TextButton>.
+        </p>
+      </Footer>
+    </div>
+  );
+}
+
+/* ---------------- Step 3: Telegram ---------------- */
+function TelegramStep({ ready: initialReady, member, error, onBack }: { ready: boolean; member: Member; error: string; onBack: () => void }) {
+  const [redirecting, setRedirecting] = useState(false);
+  // The page may have loaded before an admin saved the login settings, so confirm with the server live.
+  const [ready, setReady] = useState(initialReady);
+  const [checking, setChecking] = useState(false);
+
+  const recheck = useCallback(async () => {
+    setChecking(true);
+    try {
+      const r = await api<{ settings: { telegramLoginReady: boolean } }>("/api/state");
+      setReady(r.settings.telegramLoginReady);
+    } catch {
+      /* keep the last known value */
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    recheck();
+  }, [recheck]);
+
+  return (
+    <div>
+      <Heading title="Connect Telegram">
+        {member.name ? `Welcome, ${member.name.split(" ")[0]}. ` : ""}Your account qualifies with {member.lots} traded lots. Log in with Telegram so we can
+        deliver the videos to your chat.
+      </Heading>
+
+      <label className="ef-label">Verified account</label>
+      <div className="ef-input flex items-center justify-between text-[#c9cdd6]">
+        <span className="truncate">{member.email}</span>
+        <CheckCircle2 className="h-5 w-5 shrink-0 text-[#4d7bff]" />
+      </div>
+
+      {error && <ErrorText>{error}</ErrorText>}
+
+      {ready ? (
+        <a
+          href="/api/telegram/start"
+          onClick={() => setRedirecting(true)}
+          aria-disabled={redirecting}
+          className={`ef-btn mt-11 bg-[#2aabee] hover:bg-[#3db5f2] ${redirecting ? "pointer-events-none opacity-70" : ""}`}
+        >
+          {redirecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <TelegramIcon />}
+          {redirecting ? "Opening Telegram…" : "Log in with Telegram"}
+        </a>
+      ) : checking ? (
+        <p className="mt-11 flex items-center justify-center gap-2 text-[14px] text-[#a3a9b6]">
+          <Loader2 className="h-4 w-4 animate-spin" /> Checking Telegram login…
+        </p>
+      ) : (
+        <div className="mt-11 text-center">
+          <p className="text-[14px] text-[#a3a9b6]">Telegram login is not available right now.</p>
+          <button type="button" onClick={recheck} className="ef-btn-outline mt-4">
+            Try again
+          </button>
+        </div>
+      )}
+
+      <Footer>
+        <p>When Telegram asks, allow the bot to send you messages. We never see your Telegram password or chats.</p>
+        <p>
+          Not you? <TextButton onClick={onBack}>Use a different email</TextButton>.
+        </p>
+      </Footer>
+    </div>
+  );
+}
+
+function TelegramIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+      <path d="M21.94 4.6 18.9 19.04c-.23 1.02-.83 1.27-1.69.79l-4.66-3.44-2.25 2.17c-.25.25-.46.46-.94.46l.34-4.76 8.66-7.83c.38-.34-.08-.52-.58-.19L7.08 13.01 2.47 11.57c-1-.31-1.02-1 .21-1.48L20.66 3.2c.83-.31 1.56.19 1.28 1.4Z" />
+    </svg>
+  );
+}
+
+/* ---------------- Step 4: Deliver ---------------- */
+function DeliverStep({ botUsername, member, onDelivered, onBack }: { botUsername: string; member: Member; onDelivered: (at: string) => void; onBack: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
+  const tg = member.telegram!;
+  const botLink = botUsername ? `https://t.me/${botUsername}` : null;
+
+  async function deliver() {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await api<{ report: { sent: number; failed: number } }>("/api/deliver", { body: {} });
+      setResult(r.report);
+      onDelivered(new Date().toISOString());
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (result) {
+    return (
+      <div>
+        <Heading title="Videos sent">
+          {result.sent} video{result.sent === 1 ? " is" : "s are"} waiting in your Telegram chat
+          {result.failed ? ` (${result.failed} couldn't be sent — try again later)` : ""}. Enjoy the mentorship.
+        </Heading>
+        {botLink && (
+          <a href={botLink} target="_blank" rel="noreferrer" className="ef-btn">
+            Open @{botUsername}
+          </a>
+        )}
+        <Footer>
+          <p>
+            Done here? <TextButton onClick={onBack}>Sign out</TextButton>.
+          </p>
+        </Footer>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Heading title="You're all set">Your account is verified and Telegram is connected. Get the full mentorship series delivered to your chat.</Heading>
+
+      <label className="ef-label">Delivering to</label>
+      <div className="ef-input flex items-center gap-3">
+        {tg.photoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={tg.photoUrl} alt="" className="h-8 w-8 rounded-full" />
+        ) : (
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-[#0a47ec]/25 text-[14px] text-[#9db4ff]">{(tg.name || "?")[0]}</span>
+        )}
+        <span className="min-w-0 flex-1 truncate">{tg.name || "Telegram user"}</span>
+        <span className="truncate text-[14px] text-[#8a91a0]">{tg.username ? `@${tg.username}` : tg.id}</span>
+      </div>
+
+      {error && (
+        <ErrorText>
+          {error}
+          {botLink && /bot|Start/i.test(error) && (
+            <>
+              {" "}
+              <a href={botLink} target="_blank" rel="noreferrer" className="ef-link">
+                Open @{botUsername}
+              </a>
+            </>
+          )}
+        </ErrorText>
+      )}
+
+      <button onClick={deliver} disabled={loading} className="ef-btn mt-11">
+        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+        {loading ? "Sending videos…" : "Get my videos"}
+      </button>
+
+      <Footer>
+        {member.lastDeliveredAt && <p>Last delivered {new Date(member.lastDeliveredAt).toLocaleString()}.</p>}
+        <p>
+          Signed in as {member.email}. <TextButton onClick={onBack}>Sign out</TextButton>.
+        </p>
+      </Footer>
+    </div>
+  );
+}

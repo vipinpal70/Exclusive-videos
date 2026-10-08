@@ -1,0 +1,174 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6ff;
+  --color-brand-200: #bfd2ff;
+  --color-brand-300: #93b4ff;
+  --color-brand-400: #6b98ff;
+  --color-brand-500: #3d74ff;
+  --color-brand-600: #0a47ec;
+  --color-brand-700: #0838bd;
+}
+
+html,
+body {
+  background: #07090f;
+  color: #e2e8f0;
+}
+
+/* Tailwind v4 no longer sets a pointer cursor on buttons — restore it everywhere. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="switch"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  label[for],
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+::selection {
+  background: rgb(61 116 255 / 0.35);
+}
+
+/* ---------- Admin: compact, Cloudflare-style ---------- */
+.admin {
+  background: #0f1115;
+  color: #d4d7de;
+  font-size: 13px;
+  line-height: 1.45;
+}
+@layer components {
+  .card {
+    @apply rounded-md border border-[#262a33] bg-[#15181e];
+  }
+  .card-header {
+    @apply flex items-center justify-between gap-3 border-b border-[#262a33] px-4 py-2.5;
+  }
+  .card-title {
+    @apply text-[13px] font-medium text-[#eceef2];
+  }
+  .input {
+    @apply h-8 w-full rounded-[5px] border border-[#323743] bg-[#0f1115] px-2.5 text-[13px] text-[#eceef2] outline-none transition placeholder:text-[#646b78] hover:border-[#424857] focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 disabled:opacity-50;
+  }
+  textarea.input {
+    @apply h-auto py-1.5 leading-relaxed;
+  }
+  .btn {
+    @apply inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[5px] px-3 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-500;
+  }
+  .btn-secondary {
+    @apply border border-[#323743] bg-[#1b1f26] text-[#d4d7de] hover:border-[#424857] hover:bg-[#21262e];
+  }
+  .btn-ghost {
+    @apply text-[#a9afbb] hover:bg-[#1f232b] hover:text-white;
+  }
+  .btn-danger {
+    @apply border border-[#4a2429] bg-[#2a1518] text-[#f19aa5] hover:bg-[#351a1e];
+  }
+  .btn-sm {
+    @apply h-7 px-2 text-[12px];
+  }
+  .btn-icon {
+    @apply h-7 w-7 px-0;
+  }
+  .label {
+    @apply mb-1 block text-[12px] font-medium text-[#b4b9c4];
+  }
+  .hint {
+    @apply mt-1 text-[12px] text-[#7d8390];
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-[4px] px-1.5 py-px text-[11px] font-medium leading-[18px];
+  }
+  .table {
+    @apply w-full text-left text-[13px];
+  }
+  .table th {
+    @apply h-9 border-b border-[#262a33] bg-[#13161b] px-3 text-[12px] font-medium text-[#8b919d];
+  }
+  .table td {
+    @apply h-11 border-b border-[#20242c] px-3 align-middle;
+  }
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .table tbody tr {
+    @apply transition-colors hover:bg-[#1a1d24];
+  }
+  .menu {
+    @apply z-[60] min-w-[180px] overflow-hidden rounded-md border border-[#2c313b] bg-[#1a1d24] py-1 shadow-xl shadow-black/40;
+  }
+  .menu-item {
+    @apply flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-[#d4d7de] hover:bg-[#242933] disabled:opacity-40;
+  }
+  .menu-sep {
+    @apply my-1 h-px bg-[#2c313b];
+  }
+}
+
+/* ---------- Public (user) pages: Elefin partner-portal style ---------- */
+.ef-page {
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 40%, #131826 0%, transparent 70%),
+    #090b10;
+  color: #e7e9ee;
+}
+@layer components {
+  .ef-title {
+    @apply text-[34px] font-light leading-tight tracking-[-0.01em] text-white sm:text-[38px];
+  }
+  .ef-sub {
+    @apply mt-3 text-[15px] leading-[1.55] text-[#a3a9b6];
+  }
+  .ef-label {
+    @apply mb-2.5 block text-[11px] font-medium uppercase tracking-[0.2em] text-[#c9cdd6];
+  }
+  .ef-input {
+    @apply h-14 w-full rounded-xl border border-[#3a4152] bg-[#1b2030] px-4 text-[17px] text-white outline-none transition placeholder:text-[#6b7282] focus:border-[#4d6bff] focus:bg-[#1f2538] focus:ring-4 focus:ring-[#0a47ec]/20 disabled:opacity-60;
+  }
+  .ef-btn {
+    @apply inline-flex h-[53px] w-full items-center justify-center gap-2 rounded-full bg-[#0a47ec] px-6 text-[16px] font-medium text-white transition hover:bg-[#1f57f5] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .ef-btn-outline {
+    @apply inline-flex h-[53px] w-full items-center justify-center gap-2 rounded-full border border-[#3a4152] px-6 text-[16px] font-medium text-[#e7e9ee] transition hover:border-[#5a6275] hover:bg-white/[0.03];
+  }
+  .ef-link {
+    @apply text-[#e7e9ee] underline underline-offset-[3px] decoration-[#8a91a0] transition hover:decoration-white;
+  }
+  .ef-nav {
+    @apply inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#c9cdd6] transition hover:text-white;
+  }
+}
+
+.grid-bg {
+  background-image: linear-gradient(rgb(255 255 255 / 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at top, black 30%, transparent 75%);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-fade-up {
+  animation: fade-up 0.35s ease-out both;
+}
