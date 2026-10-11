@@ -4,9 +4,18 @@ import { checkEligibility, lookupClient } from "@/lib/elefin";
 import { sendEmail, otpEmailHtml } from "@/lib/email";
 import { getSettings, setSettings } from "@/lib/settings";
 import { getMe, tg } from "@/lib/telegram";
+import { checkXmAccount, isLoginId } from "@/lib/xm";
+import { cachedLead, isDone, syncLeads } from "@/lib/coinswitch";
+import { bool } from "@/lib/settings";
 
 /** Connection tests for each integration. body: { type: "elefin" | "telegram" | "email", email?: string } */
-const TEST_PERMISSION: Record<string, Permission> = { elefin: "settings.elefin", telegram: "settings.telegram", email: "settings.email" };
+const TEST_PERMISSION: Record<string, Permission> = {
+  elefin: "settings.elefin",
+  xm: "settings.xm",
+  coinswitch: "settings.coinswitch",
+  telegram: "settings.telegram",
+  email: "settings.email",
+};
 
 export const POST = adminRoute(async (req, _ctx, admin) => {
   const { type, email } = await req.json().catch(() => ({}));
@@ -23,6 +32,43 @@ export const POST = adminRoute(async (req, _ctx, admin) => {
         ok: true,
         message: `Found ${r.client.name} · ${e.lots} lots · ${e.eligible ? "ELIGIBLE" : `NOT eligible: ${e.reason}`}`,
         data: r.raw,
+      });
+    }
+
+    if (type === "xm") {
+      const id = String(email ?? "").replace(/s+/g, "");
+      if (!isLoginId(id)) return fail("Enter an MT5 account ID (numbers only).");
+      const x = await checkXmAccount(id, s);
+      if (!x.found) return json({ ok: true, message: `XM API reachable — account ${id} isn't under your affiliation.` });
+      const t = x.trader!;
+      const flags = [t.validated ? "validated" : "not validated", t.archived ? "archived" : "active", x.balanceOk === null ? null : x.balanceOk ? "balance above threshold" : "balance below threshold"]
+        .filter(Boolean)
+        .join(", ");
+      return json({
+        ok: true,
+        message: `Found ${id} (${t.accountType ?? "account"}, ${flags}) · ${x.activity.lots} lots in ${x.windowDays} days · ${x.eligible ? "ELIGIBLE" : `NOT eligible: ${x.reason}`}`,
+        data: x,
+      });
+    }
+
+    if (type === "coinswitch") {
+      const id = Number(String(email ?? "").replace(/s+/g, ""));
+      if (!Number.isSafeInteger(id) || id <= 0) return fail("Enter a CoinSwitch client ID (numbers only).");
+      let lead = await cachedLead(id);
+      if (!lead) {
+        await syncLeads(s, id);
+        lead = await cachedLead(id);
+      }
+      if (!lead) return json({ ok: true, message: `Client ${id} isn't in your CoinSwitch affiliate leads.` });
+      const steps = { KYC: lead.kyc_status, Bank: lead.bank_status, Deposit: lead.deposit_status, Trade: lead.trade_status };
+      const required = { KYC: bool(s.cs_require_kyc), Bank: bool(s.cs_require_bank), Deposit: bool(s.cs_require_deposit), Trade: bool(s.cs_require_trade) };
+      const missing = Object.entries(steps).filter(([k, v]) => required[k as keyof typeof required] && !isDone(v)).map(([k]) => k);
+      return json({
+        ok: true,
+        message: `Found client ${id}${lead.user_name ? ` (${lead.user_name})` : ""}, phone ••••${lead.phone_last4 ?? "????"} · ${Object.entries(steps)
+          .map(([k, v]) => `${k}: ${v ?? "—"}`)
+          .join(", ")} · ${missing.length ? `NOT eligible (missing: ${missing.join(", ")})` : "ELIGIBLE"}`,
+        data: lead,
       });
     }
 

@@ -1,6 +1,6 @@
 import { getUser } from "@/lib/auth";
 import { queryOne } from "@/lib/db";
-import { getMember, publicMember } from "@/lib/members";
+import { getMember, memberKey, publicMember } from "@/lib/members";
 import { getPublicSettings } from "@/lib/settings";
 import { Flow } from "./flow";
 
@@ -13,7 +13,7 @@ export default async function Home() {
     queryOne<{ c: number }>("SELECT COUNT(*) AS c FROM videos WHERE is_active = 1"),
   ]);
   const m = user ? await getMember(user.mid) : null;
-  const member = m && user && m.email === user.email && !m.is_blocked ? publicMember(m, user.ev) : null;
+  const member = m && user && memberKey(m) === user.email && !m.is_blocked ? publicMember(m, user.ev) : null;
 
   return (
     <Flow

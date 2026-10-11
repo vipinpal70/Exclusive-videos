@@ -1,6 +1,7 @@
 import { adminRoute, json } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { tokenState } from "@/lib/coinswitch";
 
 export const GET = adminRoute(async () => {
   const [m, v, d, l, daily, recent, s] = await Promise.all([
@@ -20,13 +21,14 @@ export const GET = adminRoute(async () => {
        FROM lookup_logs WHERE created_at > UTC_TIMESTAMP() - INTERVAL 14 DAY GROUP BY day ORDER BY day`
     ),
     query(
-      `SELECT id, email, name, lots, telegram_username, last_delivered_at FROM members
+      `SELECT id, CASE broker WHEN 'xm' THEN CONCAT('XM ', broker_account_id) WHEN 'coinswitch' THEN CONCAT('CoinSwitch ', broker_account_id) ELSE email END AS email, name, lots, telegram_username, last_delivered_at FROM members
        WHERE last_delivered_at IS NOT NULL ORDER BY last_delivered_at DESC LIMIT 8`
     ),
     getSettings(),
   ]);
 
   const n = (x: unknown) => Number(x ?? 0);
+  const cs = tokenState(s);
   return json({
     ok: true,
     members: { total: n(m?.total), eligible: n(m?.eligible), linked: n(m?.linked), delivered: n(m?.delivered), blocked: n(m?.blocked) },
@@ -35,6 +37,10 @@ export const GET = adminRoute(async () => {
     lookups7d: { total: n(l?.total), eligible: n(l?.eligible), notFound: n(l?.not_found) },
     daily: daily.map((r) => ({ day: r.day, lookups: n(r.lookups), eligible: n(r.eligible) })),
     recent,
+    coinswitch:
+      s.cs_enabled === "1"
+        ? { connected: cs.connected, expired: cs.expired, expiresAt: cs.expiresAt?.toISOString() ?? null }
+        : null,
     setup: {
       elefin: !!(s.elefin_api_base && s.elefin_api_token),
       telegram: !!(s.telegram_bot_token && s.telegram_bot_username),

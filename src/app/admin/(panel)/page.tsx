@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Circle, CircleHelp, Send, UserCheck, Users, Video } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Circle, CircleHelp, Send, UserCheck, Users, Video } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Loading, Modal, PageHeader, StatCard } from "@/components/admin-ui";
@@ -14,6 +14,7 @@ interface Stats {
   daily: { day: string; lookups: number; eligible: number }[];
   recent: { id: number; email: string; name: string | null; lots: number; telegram_username: string | null; last_delivered_at: string }[];
   setup: { elefin: boolean; telegram: boolean; email: boolean; otpEnabled: boolean; videos: boolean };
+  coinswitch: { connected: boolean; expired: boolean; expiresAt: string | null } | null;
 }
 
 export default function Dashboard() {
@@ -64,6 +65,20 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader title="Overview" subtitle="Verifications and video deliveries at a glance." />
+
+      {s.coinswitch &&
+        (s.coinswitch.expired || (s.coinswitch.expiresAt && new Date(s.coinswitch.expiresAt).getTime() - Date.now() < 4 * 3600_000)) && (
+          <Link
+            href="/admin/settings#coinswitch"
+            className="mb-4 flex items-center gap-2 rounded-md border border-[#5c4a1f] bg-[#2a2211] px-4 py-2.5 text-[13px] text-[#f5d58a] hover:bg-[#33290f]"
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {s.coinswitch.expired
+              ? "The CoinSwitch access token has expired. New CoinSwitch clients can’t verify until you get a new one."
+              : `The CoinSwitch access token expires ${new Date(s.coinswitch.expiresAt!).toLocaleString()}. Refresh it soon.`}
+            <ArrowRight className="ml-auto h-3.5 w-3.5" />
+          </Link>
+        )}
 
       {done < checklist.length && (
         <div className="card mb-4">

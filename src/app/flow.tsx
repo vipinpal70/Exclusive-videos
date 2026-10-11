@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronLeft, Loader2, Mail } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Hash, Loader2, Mail, Phone } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api";
@@ -15,6 +15,12 @@ interface PublicSettings {
   botUsername: string;
   telegramLoginReady: boolean;
   minLots: number;
+  xmEnabled: boolean;
+  xmMinLots: number;
+  xmSignupUrl: string;
+  csEnabled: boolean;
+  csSignupUrl: string;
+  xmLotsWindowDays: number;
   videoCount: number;
 }
 
@@ -34,6 +40,7 @@ interface Rejection {
   lots?: number;
   minLots?: number;
   signupUrl?: string | null;
+  broker?: "elefin" | "xm" | "coinswitch";
 }
 
 type Step = "email" | "otp" | "telegram" | "deliver";
@@ -143,49 +150,158 @@ function TextButton({ onClick, children }: { onClick: () => void; children: Reac
   );
 }
 
-/* ---------------- Step 1: email ---------------- */
+/* ---------------- Step 1: account ---------------- */
+type BrokerChoice = "elefin" | "xm" | "coinswitch";
+const BROKER_NAME: Record<BrokerChoice, string> = { elefin: "Elefin", xm: "XM", coinswitch: "CoinSwitch" };
+
 function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; onDone: (m: Member) => void; onReject: (r: Rejection) => void }) {
+  const [broker, setBroker] = useState<BrokerChoice>("elefin");
   const [email, setEmail] = useState("");
+  const [loginId, setLoginId] = useState("");
+  const [csClientId, setCsClientId] = useState("");
+  const [csPhone, setCsPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const isXm = broker === "xm";
+  const isCs = broker === "coinswitch";
+  const brokers = (["elefin", "xm", "coinswitch"] as const).filter(
+    (b) => b === "elefin" || (b === "xm" && settings.xmEnabled) || (b === "coinswitch" && settings.csEnabled)
+  );
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
     try {
-      const r = await api<{ member: Member }>("/api/verify/email", { body: { email } });
+      const r = isXm
+        ? await api<{ member: Member }>("/api/verify/xm", { body: { loginId } })
+        : isCs
+          ? await api<{ member: Member }>("/api/verify/coinswitch", { body: { clientId: csClientId, phone: csPhone } })
+          : await api<{ member: Member }>("/api/verify/email", { body: { email } });
       onDone(r.member);
     } catch (err) {
       if (err instanceof ApiError && ["not_found", "not_eligible", "blocked"].includes(String(err.data.code))) {
-        onReject({ message: err.message, ...(err.data as Omit<Rejection, "message">) });
+        onReject({ message: err.message, broker, ...(err.data as Omit<Rejection, "message">) });
       } else setError((err as Error).message);
     } finally {
       setLoading(false);
     }
   }
 
+  const minLots = isXm ? settings.xmMinLots : settings.minLots;
+  const videosText = settings.videoCount > 1 ? ` all ${settings.videoCount} videos` : settings.videoCount === 1 ? " the video" : " the videos";
+
   return (
     <form onSubmit={submit}>
       <Heading title={settings.heroTitle}>{settings.heroSubtitle}</Heading>
 
-      <label className="ef-label" htmlFor="email">
-        Email address
-      </label>
-      <div className="relative">
-        <Mail className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
-        <input
-          id="email"
-          type="email"
-          required
-          autoFocus
-          autoComplete="email"
-          placeholder="you@example.com"
-          className="ef-input h-12 pl-11 text-[16px]"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-      </div>
+      {brokers.length > 1 && (
+        <div className="mb-6">
+          <span className="ef-label">Your broker</span>
+          <div
+            className={`grid gap-1 rounded-full border border-[#2c3343] p-1 ${brokers.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}
+            role="radiogroup"
+            aria-label="Broker"
+          >
+            {brokers.map((b) => (
+              <button
+                key={b}
+                type="button"
+                role="radio"
+                aria-checked={broker === b}
+                onClick={() => {
+                  setBroker(b);
+                  setError("");
+                }}
+                className={`h-10 rounded-full text-[15px] font-medium transition ${
+                  broker === b ? "bg-[#0a47ec] text-white" : "text-[#a3a9b6] hover:text-white"
+                }`}
+              >
+                {BROKER_NAME[b]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isCs ? (
+        <>
+          <label className="ef-label" htmlFor="cs-client">
+            CoinSwitch client ID
+          </label>
+          <div className="relative">
+            <Hash className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+            <input
+              id="cs-client"
+              inputMode="numeric"
+              required
+              autoFocus
+              autoComplete="off"
+              placeholder="e.g. 13349"
+              className="ef-input h-12 pl-11 text-[16px]"
+              value={csClientId}
+              onChange={(e) => setCsClientId(e.target.value.replace(/D/g, ""))}
+            />
+          </div>
+          <label className="ef-label mt-5" htmlFor="cs-phone">
+            Phone number
+          </label>
+          <div className="relative">
+            <Phone className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+            <input
+              id="cs-phone"
+              type="tel"
+              required
+              autoComplete="tel"
+              placeholder="+91 98765 43210"
+              className="ef-input h-12 pl-11 text-[16px]"
+              value={csPhone}
+              onChange={(e) => setCsPhone(e.target.value.replace(/[^d+s-]/g, ""))}
+            />
+          </div>
+        </>
+      ) : isXm ? (
+        <>
+          <label className="ef-label" htmlFor="xm-login">
+            XM MT5 account ID
+          </label>
+          <div className="relative">
+            <Hash className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+            <input
+              id="xm-login"
+              inputMode="numeric"
+              required
+              autoFocus
+              autoComplete="off"
+              placeholder="e.g. 430464082"
+              pattern="[0-9 ]{5,14}"
+              className="ef-input h-12 pl-11 text-[16px]"
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value.replace(/[^\d ]/g, ""))}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="ef-label" htmlFor="email">
+            Email address
+          </label>
+          <div className="relative">
+            <Mail className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+            <input
+              id="email"
+              type="email"
+              required
+              autoFocus
+              autoComplete="email"
+              placeholder="you@example.com"
+              className="ef-input h-12 pl-11 text-[16px]"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+        </>
+      )}
       {error && <ErrorText>{error}</ErrorText>}
 
       <button className="ef-btn mt-11" disabled={loading}>
@@ -195,14 +311,18 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
 
       <Footer>
         <p>
-          Use the email of your Elefin trading account. You need at least {settings.minLots} traded lot{settings.minLots === 1 ? "" : "s"} to unlock
-          {settings.videoCount > 1 ? ` all ${settings.videoCount} videos` : settings.videoCount === 1 ? " the video" : " the videos"}.
+          {isCs
+            ? "Enter your CoinSwitch client ID and the phone number registered with CoinSwitch. You need an active CoinSwitch account opened with our referral to unlock"
+            : isXm
+            ? `Enter the MT5 account ID of your XM account (you'll find it in your XM Members Area). You need at least ${minLots} lot${minLots === 1 ? "" : "s"} traded in the last ${settings.xmLotsWindowDays} days to unlock`
+            : `Use the email of your Elefin trading account. You need at least ${minLots} traded lot${minLots === 1 ? "" : "s"} to unlock`}
+          {videosText}.
         </p>
-        {settings.signupUrl && (
+        {(isCs ? settings.csSignupUrl : isXm ? settings.xmSignupUrl : settings.signupUrl) && (
           <p>
-            Not an Elefin client yet?{" "}
-            <a href={settings.signupUrl} target="_blank" rel="noreferrer" className="ef-link">
-              Open an Elefin account
+            Not {isCs ? "a" : "an"} {BROKER_NAME[broker]} client yet?{" "}
+            <a href={isCs ? settings.csSignupUrl : isXm ? settings.xmSignupUrl : settings.signupUrl} target="_blank" rel="noreferrer" className="ef-link">
+              Open {isCs ? "a" : "an"} {BROKER_NAME[broker]} account
             </a>
             .
           </p>
@@ -215,6 +335,7 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
 function RejectionView({ r, onBack }: { r: Rejection; onBack: () => void }) {
   const showProgress = r.code === "not_eligible" && r.minLots !== undefined && r.lots !== undefined && r.lots < r.minLots;
   const pct = showProgress ? Math.min(100, ((r.lots ?? 0) / r.minLots!) * 100) : 0;
+  const name = BROKER_NAME[r.broker ?? "elefin"];
   return (
     <div>
       <Heading title={r.code === "not_found" ? "Account not found" : r.code === "blocked" ? "Access disabled" : "Not eligible yet"}>{r.message}</Heading>
@@ -235,13 +356,18 @@ function RejectionView({ r, onBack }: { r: Rejection; onBack: () => void }) {
 
       {r.signupUrl && r.code !== "blocked" ? (
         <a href={r.signupUrl} target="_blank" rel="noreferrer" className="ef-btn">
-          {r.code === "not_found" ? "Open an Elefin account" : "Continue trading on Elefin"}
+          {r.code === "not_found" ? `Open ${r.broker === "coinswitch" ? "a" : "an"} ${name} account` : `Continue on ${name}`}
         </a>
       ) : null}
 
       <Footer>
         <p>
-          Used a different email with Elefin? <TextButton onClick={onBack}>Try another email</TextButton>.
+          {r.broker === "xm"
+            ? "Have a different XM account?"
+            : r.broker === "coinswitch"
+              ? "Typed the wrong client ID or phone?"
+              : "Used a different email with Elefin?"}{" "}
+          <TextButton onClick={onBack}>{r.broker === "elefin" || !r.broker ? "Try another email" : "Try again"}</TextButton>.
         </p>
       </Footer>
     </div>

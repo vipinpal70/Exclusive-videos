@@ -3,6 +3,7 @@ import { queryOne } from "./db";
 import {
   DeliveryError,
   deliverVideos,
+  memberLabel,
   memberVideos,
   minutesLabel,
   pendingVideoIds,
@@ -107,18 +108,18 @@ function statusScreen(m: Member, s: Settings, greeting?: string): Screen {
 
   if (m.is_blocked) {
     return {
-      text: `${hello}⛔ <b>Your access is blocked.</b>\n\nYour Telegram is linked to <b>${esc(m.email)}</b>, but this account can’t receive the mentorship videos right now. If you think this is a mistake, please contact support.`,
+      text: `${hello}⛔ <b>Your access is blocked.</b>\n\nYour Telegram is linked to <b>${esc(memberLabel(m))}</b>, but this account can’t receive the mentorship videos right now. If you think this is a mistake, please contact support.`,
       keyboard: { inline_keyboard: supportRow },
     };
   }
   if (!m.eligible) {
     return {
-      text: `${hello}⚠️ <b>Not eligible right now.</b>\n\nYour Telegram is linked to <b>${esc(m.email)}</b>, but the account doesn’t currently meet the requirements for the mentorship videos. Verify again on the website once it does.`,
+      text: `${hello}⚠️ <b>Not eligible right now.</b>\n\nYour Telegram is linked to <b>${esc(memberLabel(m))}</b>, but the account doesn’t currently meet the requirements for the mentorship videos. Verify again on the website once it does.`,
       keyboard: { inline_keyboard: [...(httpsUrl(s.public_site_url) ? [[{ text: "🌐 Open the website", url: s.public_site_url }]] : []), ...supportRow] },
     };
   }
   return {
-    text: `${hello}✅ <b>You’re already linked</b> as <b>${esc(m.email)}</b> and eligible for the mentorship videos.\n\nTap below to see the lessons and get them here.`,
+    text: `${hello}✅ <b>You’re already linked</b> as <b>${esc(memberLabel(m))}</b> and eligible for the mentorship videos.\n\nTap below to see the lessons and get them here.`,
     keyboard: { inline_keyboard: [[{ text: "🎬 Get videos", callback_data: "menu:0" }]] },
   };
 }

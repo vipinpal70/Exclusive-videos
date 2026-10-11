@@ -17,14 +17,14 @@ export const GET = adminRoute(async (req) => {
     return json({ ok: true, rows, total: Number(total?.c ?? 0), pages: Math.max(1, Math.ceil(Number(total?.c ?? 0) / limit)) });
   }
 
-  const w = q ? "WHERE m.email LIKE ? OR m.telegram_username LIKE ? OR v.title LIKE ?" : "";
-  const p = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+  const w = q ? "WHERE m.email LIKE ? OR m.broker_account_id LIKE ? OR m.telegram_username LIKE ? OR v.title LIKE ?" : "";
+  const p = q ? [`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`] : [];
   const total = await queryOne<{ c: number }>(
     `SELECT COUNT(*) AS c FROM deliveries d LEFT JOIN members m ON m.id = d.member_id LEFT JOIN videos v ON v.id = d.video_id ${w}`,
     p
   );
   const rows = await query(
-    `SELECT d.*, m.email, m.telegram_username, v.title FROM deliveries d
+    `SELECT d.*, CASE m.broker WHEN 'xm' THEN CONCAT('XM ', m.broker_account_id) WHEN 'coinswitch' THEN CONCAT('CoinSwitch ', m.broker_account_id) ELSE m.email END AS email, m.telegram_username, v.title FROM deliveries d
      LEFT JOIN members m ON m.id = d.member_id LEFT JOIN videos v ON v.id = d.video_id ${w}
      ORDER BY d.id DESC LIMIT ? OFFSET ?`,
     [...p, limit, offset]

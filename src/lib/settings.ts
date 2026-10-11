@@ -7,7 +7,7 @@ export interface SettingDef {
   key: string;
   label: string;
   type: SettingType;
-  group: "general" | "elefin" | "eligibility" | "telegram" | "email";
+  group: "general" | "elefin" | "xm" | "coinswitch" | "eligibility" | "telegram" | "email";
   default: string;
   help?: string;
   placeholder?: string;
@@ -40,6 +40,30 @@ export const SETTING_DEFS: SettingDef[] = [
   // Elefin API
   { key: "elefin_api_base", label: "API base URL", type: "url", group: "elefin", default: "", help: "Without trailing slash. /clients/lookup is appended.", placeholder: "https://api.elefin.com/v1" },
   { key: "elefin_api_token", label: "API token", type: "secret", group: "elefin", default: "", help: "Sent as Authorization: Bearer <token> on every Elefin request." },
+
+  // XM broker
+  { key: "xm_enabled", label: "Allow XM clients", type: "boolean", group: "xm", default: "0", help: "Show an XM option on the website so XM clients can verify with their MT5 account ID." },
+  { key: "xm_api_base", label: "API base URL", type: "url", group: "xm", default: "https://mypartners.xm.com/api", help: "XM partners API, without trailing slash." },
+  { key: "xm_api_token", label: "API token", type: "secret", group: "xm", default: "", help: "From XM partners. Sent as Authorization: Bearer <token>." },
+  { key: "xm_signup_url", label: "XM sign-up / referral link", type: "url", group: "xm", default: "", help: "Shown to XM clients who aren't under your affiliation or aren't eligible yet.", placeholder: "https://..." },
+  { key: "xm_min_lots", label: "Minimum lots traded", type: "number", group: "xm", default: "1", help: "Lots the XM account must have traded within the window below." },
+  {
+    key: "xm_lots_window_days",
+    label: "Lots window (days)",
+    type: "number",
+    group: "xm",
+    default: "90",
+    help: "Count lots traded in the last N days (max 365). XM only returns 93 days per request, so longer windows take a few requests.",
+  },
+  { key: "xm_reject_archived", label: "Reject archived accounts", type: "boolean", group: "xm", default: "1", help: "Reject accounts XM has archived." },
+  {
+    key: "xm_require_balance",
+    label: "Require balance above threshold",
+    type: "boolean",
+    group: "xm",
+    default: "0",
+    help: "Uses XM's balance threshold indicator. The threshold itself is set with XM, not here.",
+  },
 
   // Eligibility
   { key: "min_lots", label: "Minimum lots traded", type: "number", group: "eligibility", default: "1", help: "Users need at least this many total lots to get the videos." },
@@ -102,6 +126,29 @@ export const SETTING_DEFS: SettingDef[] = [
     default: "10",
     help: "How long a verification code stays valid. Requesting a new code cancels the previous one.",
   },
+
+  // CoinSwitch
+  { key: "cs_enabled", label: "Allow CoinSwitch clients", type: "boolean", group: "coinswitch", default: "0", help: "Show a CoinSwitch option on the website. Clients verify with their CoinSwitch client ID and phone number." },
+  { key: "cs_signup_url", label: "CoinSwitch sign-up / referral link", type: "url", group: "coinswitch", default: "", help: "Shown to CoinSwitch clients who aren't in your affiliate leads or aren't eligible yet.", placeholder: "https://..." },
+  { key: "cs_require_kyc", label: "Require KYC completed", type: "boolean", group: "coinswitch", default: "0", help: "The lead's KYC status must be complete." },
+  { key: "cs_require_bank", label: "Require bank account added", type: "boolean", group: "coinswitch", default: "0", help: "The lead's bank status must be complete." },
+  { key: "cs_require_deposit", label: "Require a deposit", type: "boolean", group: "coinswitch", default: "0", help: "The lead's deposit status must be complete." },
+  { key: "cs_require_trade", label: "Require a trade", type: "boolean", group: "coinswitch", default: "1", help: "The lead's trade status must be complete." },
+  {
+    key: "cs_cache_minutes",
+    label: "Lead list refresh (minutes)",
+    type: "number",
+    group: "coinswitch",
+    default: "15",
+    help: "When a client isn't found in the saved lead list and it's older than this, the app fetches the latest leads from CoinSwitch before giving up.",
+  },
+
+  // Internal: CoinSwitch login state (managed from the CoinSwitch access token panel).
+  { key: "cs_phone", label: "CoinSwitch login phone", type: "text", group: "coinswitch", default: "", internal: true },
+  { key: "cs_refresh_token", label: "CoinSwitch refresh token", type: "secret", group: "coinswitch", default: "", internal: true },
+  { key: "cs_access_token", label: "CoinSwitch access token", type: "secret", group: "coinswitch", default: "", internal: true },
+  { key: "cs_token_expires_at", label: "CoinSwitch token expiry", type: "text", group: "coinswitch", default: "", internal: true },
+  { key: "cs_last_sync_at", label: "CoinSwitch last lead sync", type: "text", group: "coinswitch", default: "", internal: true },
 
   // Internal: set by the app when the bot webhook is connected.
   { key: "telegram_webhook_secret", label: "Webhook secret", type: "secret", group: "telegram", default: "", internal: true },
@@ -168,5 +215,11 @@ export async function getPublicSettings() {
     botUsername: s.telegram_bot_username,
     telegramLoginReady: !!(s.telegram_client_id && s.telegram_client_secret),
     minLots: num(s.min_lots),
+    xmEnabled: bool(s.xm_enabled) && !!s.xm_api_token,
+    xmMinLots: num(s.xm_min_lots),
+    xmSignupUrl: s.xm_signup_url,
+    csEnabled: bool(s.cs_enabled),
+    csSignupUrl: s.cs_signup_url,
+    xmLotsWindowDays: num(s.xm_lots_window_days, 90),
   };
 }

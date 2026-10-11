@@ -93,6 +93,24 @@ export const SCHEMA = [
     INDEX idx_lookup_ip (ip, created_at),
     INDEX idx_lookup_created (created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // Server-side copy of the CoinSwitch affiliate lead list (CoinSwitch has no single-client lookup).
+  // Never exposed to the public website; verification only reads the row for the client being checked.
+  `CREATE TABLE IF NOT EXISTS cs_leads (
+    client_id BIGINT NOT NULL PRIMARY KEY,
+    phone_last4 VARCHAR(8) NULL,
+    user_name VARCHAR(255) NULL,
+    signup_date DATETIME NULL,
+    last_activity_date DATETIME NULL,
+    user_stage VARCHAR(64) NULL,
+    kyc_status VARCHAR(64) NULL,
+    bank_status VARCHAR(64) NULL,
+    deposit_status VARCHAR(64) NULL,
+    trade_status VARCHAR(64) NULL,
+    lead_source VARCHAR(255) NULL,
+    synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_cs_leads_activity (last_activity_date)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 // Column additions for existing installs (MySQL 8 has no ADD COLUMN IF NOT EXISTS).
@@ -103,11 +121,17 @@ const COLUMNS = [
   { table: "members", column: "pending_video_ids", ddl: "ALTER TABLE members ADD COLUMN pending_video_ids TEXT NULL AFTER last_delivered_at" },
   // Deliveries before this time are ignored for re-delivery rules (admin "Reset delivery").
   { table: "members", column: "delivery_reset_at", ddl: "ALTER TABLE members ADD COLUMN delivery_reset_at DATETIME NULL AFTER pending_video_ids" },
+  // Which broker verified the member. XM members are identified by their MT5 account ID (XM's API has no emails).
+  { table: "members", column: "broker", ddl: "ALTER TABLE members ADD COLUMN broker VARCHAR(20) NOT NULL DEFAULT 'elefin' AFTER email" },
+  { table: "members", column: "broker_account_id", ddl: "ALTER TABLE members ADD COLUMN broker_account_id VARCHAR(64) NULL AFTER broker" },
+  // Phone number given by CoinSwitch members when verifying (matched against the last 4 digits CoinSwitch shares).
+  { table: "members", column: "phone", ddl: "ALTER TABLE members ADD COLUMN phone VARCHAR(20) NULL AFTER broker_account_id" },
 ];
 
 const INDEXES = [
   // Per-video cooldown lookups: last successful delivery of each video to a member.
   { table: "deliveries", name: "idx_deliveries_member_video", ddl: "CREATE INDEX idx_deliveries_member_video ON deliveries (member_id, video_id, status, created_at)" },
+  { table: "members", name: "uq_members_broker_account", ddl: "CREATE UNIQUE INDEX uq_members_broker_account ON members (broker, broker_account_id)" },
 ];
 
 /** Applies column migrations and data fixes. `run(sql, params)` must return rows for SELECTs. */
@@ -126,6 +150,13 @@ export async function migrate(run) {
     );
     if (Number(rows[0].c) === 0) await run(i.ddl, []);
   }
+  // XM members have no email, so email becomes optional (it stays unique when present).
+  const email = await run(
+    "SELECT IS_NULLABLE AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'members' AND COLUMN_NAME = 'email'",
+    []
+  );
+  if (email[0]?.n === "NO") await run("ALTER TABLE members MODIFY email VARCHAR(255) NULL", []);
+
   // Installs that predate permissions: the oldest admin becomes the super admin.
   const supers = await run("SELECT COUNT(*) AS c FROM admins WHERE is_super = 1", []);
   if (Number(supers[0].c) === 0) await run("UPDATE admins SET is_super = 1 ORDER BY id ASC LIMIT 1", []);

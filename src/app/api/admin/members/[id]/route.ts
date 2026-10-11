@@ -1,7 +1,9 @@
 import { adminRoute, fail, json } from "@/lib/auth";
 import { execute, query, queryOne } from "@/lib/db";
 import { checkEligibility, lookupClient } from "@/lib/elefin";
-import { DeliveryError, deliverVideos, getMember, setPendingVideos, upsertMemberFromLookup } from "@/lib/members";
+import { DeliveryError, deliverVideos, getMember, setPendingVideos, upsertCsMember, upsertMemberFromLookup, upsertXmMember } from "@/lib/members";
+import { checkXmAccount } from "@/lib/xm";
+import { checkCsClient, syncLeads } from "@/lib/coinswitch";
 import { getSettings } from "@/lib/settings";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -43,10 +45,24 @@ export const POST = adminRoute<Ctx>(async (req, { params }) => {
       return json({ ok: true, message: "Delivery reset. The member can request every video again right away." });
     case "refresh": {
       const s = await getSettings();
-      const r = await lookupClient(m.email, s);
+      if (m.broker === "coinswitch") {
+        // Fetch the latest leads first so statuses are current, then re-check this client.
+        await syncLeads(s, Number(m.broker_account_id));
+        const c = await checkCsClient(Number(m.broker_account_id), m.phone ?? "", s);
+        if (!c.found) return fail("CoinSwitch: this client is no longer in your affiliate leads.");
+        await upsertCsMember(Number(m.broker_account_id), m.phone ?? "", c);
+        return json({ ok: true, message: `Refreshed from CoinSwitch: ${c.eligible ? "eligible" : `not eligible: ${c.reason}`}` });
+      }
+      if (m.broker === "xm") {
+        const x = await checkXmAccount(m.broker_account_id!, s);
+        if (!x.found) return fail("XM: this account is no longer under your affiliation.");
+        await upsertXmMember(m.broker_account_id!, x);
+        return json({ ok: true, message: `Refreshed from XM: ${x.activity.lots} lots in ${x.windowDays} days, ${x.eligible ? "eligible" : `not eligible: ${x.reason}`}` });
+      }
+      const r = await lookupClient(m.email!, s);
       if (!r.found) return fail(`Elefin: ${r.message}`);
       const e = checkEligibility(r.client, s);
-      await upsertMemberFromLookup(m.email, r.client, e, r.raw);
+      await upsertMemberFromLookup(m.email!, r.client, e, r.raw);
       return json({ ok: true, message: `Refreshed: ${e.lots} lots, ${e.eligible ? "eligible" : `not eligible — ${e.reason}`}` });
     }
     case "deliver": {

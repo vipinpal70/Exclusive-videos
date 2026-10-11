@@ -8,6 +8,7 @@ import { Dot, Loading, PageHeader, Toggle } from "@/components/admin-ui";
 import { SETTINGS_GROUP_PERMISSION } from "@/lib/permissions";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
+import { CoinSwitchPanel } from "./coinswitch-panel";
 
 interface Setting {
   key: string;
@@ -23,6 +24,8 @@ interface Setting {
 
 const GROUPS = [
   { id: "elefin", title: "Elefin API", desc: "Used to look up clients. The token is sent as a Bearer token on every request." },
+  { id: "xm", title: "XM broker", desc: "Let XM clients verify with their MT5 account ID. Uses the XM partners API." },
+  { id: "coinswitch", title: "CoinSwitch", desc: "Let CoinSwitch clients verify with their client ID and phone number. Uses the CoinSwitch affiliate leads API." },
   { id: "eligibility", title: "Eligibility", desc: "Rules a client must meet to receive the videos." },
   { id: "telegram", title: "Telegram bot", desc: "Logs members in and delivers the videos with copyMessage." },
   { id: "email", title: "Email verification", desc: "Optionally send a one-time code with Resend to confirm members own their email." },
@@ -120,6 +123,7 @@ export default function SettingsPage() {
 
                 {g.id === "telegram" && <TelegramLoginUrls />}
                 {g.id === "telegram" && <TelegramWebhookPanel editable={editable} />}
+                {g.id === "coinswitch" && <CoinSwitchPanel editable={editable} />}
 
                 <fieldset disabled={!editable} className="divide-y divide-[#20242c] disabled:[&_input]:opacity-70">
                   {items.map((s) => (
@@ -362,7 +366,8 @@ function TestPanel({ group }: { group: string }) {
   const [result, setResult] = useState<{ ok: boolean; message: string; data?: unknown } | null>(null);
   const [showRaw, setShowRaw] = useState(false);
 
-  const type = group === "elefin" ? "elefin" : group === "telegram" ? "telegram" : group === "email" ? "email" : null;
+  const type =
+    group === "elefin" || group === "xm" || group === "coinswitch" || group === "telegram" || group === "email" ? group : null;
   if (!type) return <div />;
   const needsEmail = type !== "telegram";
 
@@ -385,14 +390,22 @@ function TestPanel({ group }: { group: string }) {
         {needsEmail && (
           <input
             className="input w-[220px]"
-            placeholder={type === "elefin" ? "Client email to look up" : "Send test email to"}
+            placeholder={
+              type === "elefin"
+                ? "Client email to look up"
+                : type === "xm"
+                  ? "MT5 account ID to look up"
+                  : type === "coinswitch"
+                    ? "Client ID to look up"
+                    : "Send test email to"
+            }
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
         )}
         <button className="btn btn-secondary" onClick={run} disabled={loading || (needsEmail && !email)}>
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {type === "elefin" ? "Test lookup" : type === "telegram" ? "Test bot" : "Send test"}
+          {type === "elefin" || type === "xm" || type === "coinswitch" ? "Test lookup" : type === "telegram" ? "Test bot" : "Send test"}
         </button>
         <span className="text-[12px] text-[#646b78]">Uses saved values</span>
       </div>

@@ -1,12 +1,27 @@
 import { adminRoute, fail, json } from "@/lib/auth";
 import { execute, query } from "@/lib/db";
+import { bool, getSettings } from "@/lib/settings";
 
 /** Every member, for matching against the broker's client list by email. */
 export const GET = adminRoute(async () => {
-  const members = await query<{ id: number; email: string; name: string | null; is_blocked: number }>(
-    "SELECT id, email, name, is_blocked FROM members ORDER BY id"
+  const members = await query<{ id: number; email: string | null; broker: string; broker_account_id: string | null; name: string | null; is_blocked: number }>(
+    "SELECT id, email, broker, broker_account_id, name, is_blocked FROM members ORDER BY id"
   );
-  return json({ ok: true, members: members.map((m) => ({ id: m.id, email: m.email.toLowerCase(), name: m.name, blocked: !!m.is_blocked })) });
+  const s = await getSettings();
+  return json({
+    ok: true,
+    xmEnabled: bool(s.xm_enabled) && !!s.xm_api_token,
+    csEnabled: bool(s.cs_enabled),
+    csLastSyncAt: s.cs_last_sync_at || null,
+    members: members.map((m) => ({
+      id: m.id,
+      broker: m.broker,
+      email: (m.email ?? "").toLowerCase(),
+      accountId: m.broker_account_id,
+      name: m.name,
+      blocked: !!m.is_blocked,
+    })),
+  });
 }, "members.manage");
 
 /** Blocks or unblocks the given members. body: { memberIds: number[], action?: "block" | "unblock" } */

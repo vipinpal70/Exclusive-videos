@@ -13,7 +13,10 @@ import { BulkSend } from "./bulk-send";
 
 interface Member {
   id: number;
-  email: string;
+  email: string | null;
+  broker: "elefin" | "xm" | "coinswitch";
+  broker_account_id: string | null;
+  phone: string | null;
   elefin_client_id: string | null;
   name: string | null;
   country: string | null;
@@ -35,7 +38,13 @@ interface Member {
   lookup_json?: string;
 }
 
-type Filter = "all" | "eligible" | "ineligible" | "linked" | "delivered" | "blocked";
+type Filter = "all" | "eligible" | "ineligible" | "linked" | "delivered" | "blocked" | "elefin" | "xm" | "coinswitch";
+
+const BROKER_NAME = { elefin: "Elefin", xm: "XM", coinswitch: "CoinSwitch" } as const;
+
+/** Email for Elefin members, "XM account <id>" for XM members (XM has no emails). */
+const label = (m: Pick<Member, "broker" | "email" | "broker_account_id">) =>
+  m.broker === "xm" ? `XM account ${m.broker_account_id}` : m.broker === "coinswitch" ? `CoinSwitch client ${m.broker_account_id}` : (m.email ?? "—");
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "eligible", label: "Eligible" },
@@ -43,13 +52,16 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "linked", label: "Telegram linked" },
   { id: "delivered", label: "Received" },
   { id: "blocked", label: "Blocked" },
+  { id: "elefin", label: "Elefin" },
+  { id: "xm", label: "XM" },
+  { id: "coinswitch", label: "CoinSwitch" },
 ];
 
 type MemberAction = "deliver" | "refresh" | "reset_delivery" | "unlink_telegram" | "block" | "unblock";
 
 /** Confirmation text for each member action. Every action asks before it runs. */
 function confirmFor(action: MemberAction | "delete", m: Member): ConfirmOptions {
-  const who = <span className="text-[#eceef2]">{m.name || m.email}</span>;
+  const who = <span className="text-[#eceef2]">{m.name || label(m)}</span>;
   const tg = m.telegram_username ? `@${m.telegram_username}` : "their Telegram";
   switch (action) {
     case "deliver":
@@ -60,8 +72,12 @@ function confirmFor(action: MemberAction | "delete", m: Member): ConfirmOptions 
       };
     case "refresh":
       return {
-        title: "Refresh from Elefin?",
-        message: <>Look up {who} in Elefin again and update their lots and eligibility with the latest data.</>,
+        title: `Refresh from ${BROKER_NAME[m.broker]}?`,
+        message: (
+          <>
+            Look up {who} in {BROKER_NAME[m.broker]} again and update their eligibility with the latest data.
+          </>
+        ),
         confirmLabel: "Refresh",
       };
     case "reset_delivery":
@@ -145,7 +161,7 @@ function useMemberActions(onChanged: () => void) {
     return [
       ...extra,
       { label: "Send videos now", icon: <Send />, onClick: () => act(m, "deliver"), disabled: !m.telegram_id },
-      { label: "Refresh from Elefin", icon: <RefreshCw />, onClick: () => act(m, "refresh") },
+      { label: `Refresh from ${BROKER_NAME[m.broker]}`, icon: <RefreshCw />, onClick: () => act(m, "refresh") },
       { label: "Reset delivery", icon: <RotateCcw />, onClick: () => act(m, "reset_delivery"), disabled: !m.last_delivered_at },
       { label: "Unlink Telegram", icon: <Unlink />, onClick: () => act(m, "unlink_telegram"), disabled: !m.telegram_id },
       m.is_blocked
@@ -267,8 +283,12 @@ function Members() {
                   {data.members.map((m) => (
                     <tr key={m.id} className="cursor-pointer" onClick={() => setOpenId(m.id)}>
                       <td className="max-w-0">
-                        <div className="truncate text-[#eceef2]">{m.name || "—"}</div>
-                        <div className="truncate text-[12px] text-[#7d8390]">{m.email}</div>
+                        <div className="flex items-center gap-1.5 truncate text-[#eceef2]">
+                          {m.broker === "xm" && <span className="badge shrink-0 bg-[#2a1f3d] text-[#c4a8ff]">XM</span>}
+                          {m.broker === "coinswitch" && <span className="badge shrink-0 bg-[#13302e] text-[#7fe0d2]">CoinSwitch</span>}
+                          <span className="truncate">{m.name || (m.broker !== "elefin" ? m.broker_account_id : "—")}</span>
+                        </div>
+                        <div className="truncate text-[12px] text-[#7d8390]">{label(m)}</div>
                       </td>
                       <td className="text-right tabular-nums text-[#b4b9c4]">{Number(m.lots).toFixed(2)}</td>
                       <td>
@@ -353,7 +373,7 @@ function MemberModal({ id, onClose, onChanged }: { id: number | null; onClose: (
   );
 
   return (
-    <Modal open={id !== null} onClose={onClose} title={m ? m.name || m.email : "Member"} wide>
+    <Modal open={id !== null} onClose={onClose} title={m ? m.name || label(m) : "Member"} wide>
       {!m ? (
         <Loading />
       ) : (
@@ -376,17 +396,33 @@ function MemberModal({ id, onClose, onChanged }: { id: number | null; onClose: (
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Section title="Elefin">
-              <Row k="Email" v={m.email} />
-              <Row k="Client ID" v={m.elefin_client_id ?? "—"} />
-              <Row k="Country" v={m.country ?? "—"} />
-              <Row k="Lots traded" v={Number(m.lots).toFixed(2)} />
-              <Row k="Net deposit" v={`$${Number(m.net_deposit).toLocaleString()}`} />
-              <Row k="Affiliated" v={m.affiliated ? "Yes" : "No"} />
-              <Row k="Eligible" v={<StatusBadge ok={!!m.eligible}>{m.eligible ? "Yes" : "No"}</StatusBadge>} />
-              <Row k="Email verified" v={fmtDate(m.email_verified_at)} />
-              <Row k="Last checked" v={fmtDate(m.last_lookup_at)} />
-            </Section>
+            {m.broker === "coinswitch" ? (
+              <Section title="CoinSwitch">
+                <Row k="Client ID" v={<span className="font-mono text-[12px]">{m.broker_account_id}</span>} />
+                <Row k="Phone" v={m.phone ?? "—"} />
+                <Row k="Eligible" v={<StatusBadge ok={!!m.eligible}>{m.eligible ? "Yes" : "No"}</StatusBadge>} />
+                <Row k="Last checked" v={fmtDate(m.last_lookup_at)} />
+              </Section>
+            ) : m.broker === "xm" ? (
+              <Section title="XM">
+                <Row k="MT5 account" v={<span className="font-mono text-[12px]">{m.broker_account_id}</span>} />
+                <Row k="Lots (recent window)" v={Number(m.lots).toFixed(2)} />
+                <Row k="Eligible" v={<StatusBadge ok={!!m.eligible}>{m.eligible ? "Yes" : "No"}</StatusBadge>} />
+                <Row k="Last checked" v={fmtDate(m.last_lookup_at)} />
+              </Section>
+            ) : (
+              <Section title="Elefin">
+                <Row k="Email" v={m.email ?? "—"} />
+                <Row k="Client ID" v={m.elefin_client_id ?? "—"} />
+                <Row k="Country" v={m.country ?? "—"} />
+                <Row k="Lots traded" v={Number(m.lots).toFixed(2)} />
+                <Row k="Net deposit" v={`${Number(m.net_deposit).toLocaleString()}`} />
+                <Row k="Affiliated" v={m.affiliated ? "Yes" : "No"} />
+                <Row k="Eligible" v={<StatusBadge ok={!!m.eligible}>{m.eligible ? "Yes" : "No"}</StatusBadge>} />
+                <Row k="Email verified" v={fmtDate(m.email_verified_at)} />
+                <Row k="Last checked" v={fmtDate(m.last_lookup_at)} />
+              </Section>
+            )}
             <Section title="Telegram">
               {m.telegram_id ? (
                 <>
@@ -441,7 +477,7 @@ function MemberModal({ id, onClose, onChanged }: { id: number | null; onClose: (
           {m.lookup_json && (
             <div>
               <button className="text-[12px] text-[#8b919d] underline hover:text-white" onClick={() => setShowRaw(!showRaw)}>
-                {showRaw ? "Hide" : "Show"} raw Elefin response
+                {showRaw ? "Hide" : "Show"} raw {BROKER_NAME[m.broker]} response
               </button>
               {showRaw && (
                 <pre className="mt-2 max-h-72 overflow-auto rounded-[5px] border border-[#262a33] bg-[#0b0d10] p-3 font-mono text-[11px] text-[#b4b9c4]">

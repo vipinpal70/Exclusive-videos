@@ -6,7 +6,13 @@ import { tg, TelegramError } from "./telegram";
 
 export interface Member {
   id: number;
-  email: string;
+  /** Null for XM members (XM's API has no emails). */
+  email: string | null;
+  broker: Broker;
+  /** XM MT5 account ID or CoinSwitch client ID; null for Elefin members. */
+  broker_account_id: string | null;
+  /** Phone number CoinSwitch members gave when verifying. */
+  phone: string | null;
   elefin_client_id: string | null;
   name: string | null;
   country: string | null;
@@ -28,6 +34,20 @@ export interface Member {
   is_blocked: number;
   created_at: Date;
 }
+
+export type Broker = "elefin" | "xm" | "coinswitch";
+
+/** Stable identity stored in the user session: the email for Elefin, "xm:<login>" for XM. */
+export const memberKey = (m: Pick<Member, "broker" | "email" | "broker_account_id">) =>
+  m.broker === "xm" ? `xm:${m.broker_account_id}` : m.broker === "coinswitch" ? `cs:${m.broker_account_id}` : (m.email ?? "");
+
+/** How to show a member when there may be no email. */
+export const memberLabel = (m: Pick<Member, "broker" | "email" | "broker_account_id">) =>
+  m.broker === "xm"
+    ? `XM account ${m.broker_account_id}`
+    : m.broker === "coinswitch"
+      ? `CoinSwitch client ${m.broker_account_id}`
+      : (m.email ?? "");
 
 export const normalizeEmail = (e: string) => e.trim().toLowerCase();
 export const isEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 255;
@@ -56,6 +76,37 @@ export async function upsertMemberFromLookup(email: string, client: ElefinClient
     ]
   );
   return (await queryOne<Member>("SELECT * FROM members WHERE email = ?", [email]))!;
+}
+
+/** Creates or updates an XM member from an XM eligibility check. */
+export async function upsertXmMember(
+  loginId: string,
+  check: { eligible: boolean; activity: { lots: number }; trader: unknown; balanceOk: boolean | null }
+): Promise<Member> {
+  await execute(
+    `INSERT INTO members (email, broker, broker_account_id, affiliated, lots, eligible, lookup_json, last_lookup_at)
+     VALUES (NULL, 'xm', ?, 1, ?, ?, ?, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE affiliated = VALUES(affiliated), lots = VALUES(lots), eligible = VALUES(eligible),
+       lookup_json = VALUES(lookup_json), last_lookup_at = VALUES(last_lookup_at)`,
+    [loginId, check.activity.lots, check.eligible ? 1 : 0, JSON.stringify({ trader: check.trader, activity: check.activity, balanceOk: check.balanceOk })]
+  );
+  return (await queryOne<Member>("SELECT * FROM members WHERE broker = 'xm' AND broker_account_id = ?", [loginId]))!;
+}
+
+/** Creates or updates a CoinSwitch member from a CoinSwitch eligibility check. */
+export async function upsertCsMember(
+  clientId: number,
+  phone: string,
+  check: { eligible: boolean; lead: { user_name: string | null } | null }
+): Promise<Member> {
+  await execute(
+    `INSERT INTO members (email, broker, broker_account_id, phone, name, affiliated, lots, eligible, lookup_json, last_lookup_at)
+     VALUES (NULL, 'coinswitch', ?, ?, ?, 1, 0, ?, ?, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE phone = VALUES(phone), name = COALESCE(VALUES(name), name), eligible = VALUES(eligible),
+       lookup_json = VALUES(lookup_json), last_lookup_at = VALUES(last_lookup_at)`,
+    [String(clientId), phone, check.lead?.user_name || null, check.eligible ? 1 : 0, JSON.stringify(check.lead)]
+  );
+  return (await queryOne<Member>("SELECT * FROM members WHERE broker = 'coinswitch' AND broker_account_id = ?", [String(clientId)]))!;
 }
 
 export async function logLookup(email: string, found: boolean, eligible: boolean, lots: number | null, reason: string | null, ip: string) {
@@ -298,7 +349,8 @@ export function botStartUrl(s: Settings) {
 
 export function publicMember(m: Member, emailVerified: boolean) {
   return {
-    email: m.email,
+    email: memberLabel(m),
+    broker: m.broker,
     name: m.name,
     lots: Number(m.lots),
     eligible: !!m.eligible,

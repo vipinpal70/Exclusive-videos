@@ -3,7 +3,7 @@
 A Next.js app that verifies Elefin broker clients and delivers mentorship videos to eligible clients on Telegram. Everything except the database connection is managed from a built-in admin panel.
 
 - **Stack:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, MySQL (`mysql2`)
-- **Integrations:** Elefin broker API, Telegram Bot API plus Telegram Login (OpenID Connect), Resend (email OTP)
+- **Integrations:** Elefin broker API, XM partners API, CoinSwitch affiliate leads API, Telegram Bot API plus Telegram Login (OpenID Connect), Resend (email OTP)
 
 ---
 
@@ -87,6 +87,34 @@ Go to **Admin → Settings** and fill in each section. Each integration section 
 Drag rows to reorder. Use the **⋯** menu to edit, re-check permissions, open in Telegram, activate or deactivate, move, or delete.
 
 ---
+
+## XM broker (optional)
+
+Turn on **Settings → XM broker → Allow XM clients** to let XM clients verify with their **MT5 account ID**. XM's API has no emails, so XM clients skip the email OTP step. Their Telegram account is still linked one-to-one.
+
+| Setting                         | Meaning                                                                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API base URL / token            | XM partners API (`https://mypartners.xm.com/api`), sent as `Authorization: Bearer <token>`. Stored only in the database.                                                          |
+| Minimum lots + lots window      | Lots the account must have traded in the last N days (max 365). XM returns at most 93 days per request, so longer windows take a few requests.                                    |
+| Reject archived                 | Uses the `archived` flag from XM's trader lookup. Accounts must always be `validated` (XM's affiliation flag); a non-validated account is treated as not under your partner link. |
+| Require balance above threshold | Uses XM's balance threshold indicator. The threshold itself is agreed with XM.                                                                                                    |
+| XM sign-up link                 | Shown to XM clients who aren't under your affiliation or aren't eligible yet.                                                                                                     |
+
+XM endpoints used: `GET /traders/{loginId}` (affiliation check; 404 means not yours), `GET /trader-statistics/trades` (filtered by `traderIds`, at most 93 days per request) and `GET /trader-balance?traderIds=…`.
+
+**Bulk block and unblock for XM** use a broker switch in the dialog. XM rules are **(hasn't) traded in the last N days** and **balance below / at or above XM's threshold**. They check only your XM members, in batches of 50 accounts. XM doesn't share deposit history, so there is no deposit rule for XM.
+
+## CoinSwitch (optional)
+
+Turn on **Settings → CoinSwitch → Allow CoinSwitch clients** to let CoinSwitch clients verify with their **client ID and phone number**. CoinSwitch's leads only include the last 4 digits of the phone, so the app matches the client ID and checks those digits. The full phone number is saved on the member. Both "unknown client ID" and "wrong phone" get the same message, so client IDs can't be probed.
+
+**Access token (renew every 24 hours).** In Settings → CoinSwitch, click **Get access token**: enter your partner phone number, the SMS code, then your PIN. The token is saved in the database and lasts 24 hours; the PIN is never stored. The panel and the Overview page show when it expires. **Tip:** add a repeating reminder in your calendar app (or any reminder app) to go off every 20 to 23 hours, so you can refresh the token before it expires.
+
+**Lead list.** CoinSwitch has no single-client lookup, so the app keeps a server-side copy of your leads (`cs_leads`, 500 per page from `GET https://coinswitch.co/pro/api/v1/affiliate/leads`). **Sync leads now** refreshes it with progress. When someone verifies and isn't in the saved list, the app fetches the latest leads first, if the list is older than the refresh setting. The website endpoint only ever returns the current user's own result. While the token is expired, clients already in the saved list can still verify.
+
+**Eligibility switches:** require KYC completed, bank account added, a deposit, and/or a trade (trade is on by default). A step counts as **not done** when its status is `NOT_STARTED`, `PENDING`, contains `PROGRESS` (for example `IN_PROGRESS`), is `false`, `0`, `no` or `none`, or is empty. Any other status counts as completed. The panel lists the status values CoinSwitch actually sends.
+
+**Bulk block and unblock for CoinSwitch:** rules are **no activity / activity in the last N days** (from `last_activity_date`), plus **hasn't deposited / has deposited** and **hasn't traded / has traded**. It refreshes the lead list first. If CoinSwitch can't be reached (for example an expired token), you can continue with the saved list.
 
 ## Admin panel
 

@@ -20,8 +20,9 @@ export const ADMIN_SESSION_TTL = 60 * 60 * 12;
 
 export interface UserClaims {
   mid: number; // member id
+  /** Member identity: the email for Elefin members, "xm:<login>" for XM members (see memberKey). */
   email: string;
-  ev: boolean; // email verified (or OTP disabled)
+  ev: boolean; // email verified (or OTP disabled; always true for XM)
 }
 
 export async function signToken(payload: object, maxAgeSeconds: number, audience: string) {
