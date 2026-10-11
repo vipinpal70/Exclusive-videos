@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, LayoutDashboard, ListChecks, Loader2, LogOut, Menu, PlayCircle, Settings, ShieldUser, Users, Video, X } from "lucide-react";
+import { ExternalLink, LayoutDashboard, ListChecks, Loader2, LogOut, Menu, Settings, ShieldUser, Users, Video, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -37,9 +37,7 @@ export function Sidebar({ username, siteName, isSuper }: { username: string; sit
   const nav = (
     <div className="flex h-full flex-col text-[13px]">
       <div className="flex h-12 items-center gap-2 border-b border-[#232730] px-4">
-        <div className="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] bg-brand-600 text-white">
-          <PlayCircle className="h-3.5 w-3.5" />
-        </div>
+        <img src="/tradecircle-logo.jpeg" alt={siteName} className="h-7 w-7 shrink-0 rounded-[5px] object-cover" />
         <span className="truncate font-medium text-[#eceef2]">{siteName}</span>
       </div>
       <nav className="flex-1 space-y-px px-2 py-3">

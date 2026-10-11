@@ -22,7 +22,7 @@ export const SETTING_DEFS: SettingDef[] = [
     label: "Site name",
     type: "text",
     group: "general",
-    default: "Elefin Exclusive Mentorship",
+    default: "The Traders' Circle",
     help: "Shown in the page header, browser tab, admin sidebar and email copyright line.",
   },
   { key: "hero_title", label: "Hero title", type: "text", group: "general", default: "Mentorship access", help: "Main heading on the first step of the public page." },
