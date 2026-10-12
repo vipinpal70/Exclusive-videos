@@ -78,7 +78,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
   }
 
   const stepReady =
-    step === "phone" ? phone.replace(/D/g, "").length >= 10 : step === "otp" ? otp.length >= 4 : pin.length >= 4;
+    step === "phone" ? phone.replace(/\D/g, "").length >= 10 : step === "otp" ? otp.length >= 4 : pin.length >= 4;
 
   function closeLogin() {
     if (busy) return;
@@ -235,7 +235,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
                 autoComplete="one-time-code"
                 placeholder="Code"
                 value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/D/g, ""))}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
                 autoFocus
               />
               <p className="hint">
@@ -263,7 +263,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
                 autoComplete="off"
                 placeholder="PIN"
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/D/g, ""))}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
                 autoFocus
               />
               <p className="hint">Your PIN is only sent to CoinSwitch to get the token. It is never saved.</p>

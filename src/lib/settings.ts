@@ -42,7 +42,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "elefin_api_token", label: "API token", type: "secret", group: "elefin", default: "", help: "Sent as Authorization: Bearer <token> on every Elefin request." },
 
   // XM broker
-  { key: "xm_enabled", label: "Allow XM clients", type: "boolean", group: "xm", default: "0", help: "Show an XM option on the website so XM clients can verify with their MT5 account ID." },
+  { key: "xm_enabled", label: "Allow XM clients", type: "boolean", group: "xm", default: "1", help: "Show an XM option on the website so XM clients can verify with their MT5 account ID." },
   { key: "xm_api_base", label: "API base URL", type: "url", group: "xm", default: "https://mypartners.xm.com/api", help: "XM partners API, without trailing slash." },
   { key: "xm_api_token", label: "API token", type: "secret", group: "xm", default: "", help: "From XM partners. Sent as Authorization: Bearer <token>." },
   { key: "xm_signup_url", label: "XM sign-up / referral link", type: "url", group: "xm", default: "", help: "Shown to XM clients who aren't under your affiliation or aren't eligible yet.", placeholder: "https://..." },
@@ -128,7 +128,7 @@ export const SETTING_DEFS: SettingDef[] = [
   },
 
   // CoinSwitch
-  { key: "cs_enabled", label: "Allow CoinSwitch clients", type: "boolean", group: "coinswitch", default: "0", help: "Show a CoinSwitch option on the website. Clients verify with their CoinSwitch client ID and phone number." },
+  { key: "cs_enabled", label: "Allow CoinSwitch clients", type: "boolean", group: "coinswitch", default: "1", help: "Show a CoinSwitch option on the website. Clients verify with their CoinSwitch client ID and phone number." },
   { key: "cs_signup_url", label: "CoinSwitch sign-up / referral link", type: "url", group: "coinswitch", default: "", help: "Shown to CoinSwitch clients who aren't in your affiliate leads or aren't eligible yet.", placeholder: "https://..." },
   { key: "cs_require_kyc", label: "Require KYC completed", type: "boolean", group: "coinswitch", default: "0", help: "The lead's KYC status must be complete." },
   { key: "cs_require_bank", label: "Require bank account added", type: "boolean", group: "coinswitch", default: "0", help: "The lead's bank status must be complete." },
@@ -215,7 +215,7 @@ export async function getPublicSettings() {
     botUsername: s.telegram_bot_username,
     telegramLoginReady: !!(s.telegram_client_id && s.telegram_client_secret),
     minLots: num(s.min_lots),
-    xmEnabled: bool(s.xm_enabled) && !!s.xm_api_token,
+    xmEnabled: bool(s.xm_enabled),
     xmMinLots: num(s.xm_min_lots),
     xmSignupUrl: s.xm_signup_url,
     csEnabled: bool(s.cs_enabled),

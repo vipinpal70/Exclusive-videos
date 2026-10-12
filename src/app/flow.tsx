@@ -81,7 +81,10 @@ export function Flow({ settings, initialMember }: { settings: PublicSettings; in
   return (
     <div className="ef-page flex min-h-screen flex-col">
       <header className="flex items-center justify-between px-6 py-7 sm:px-[60px]">
-        <span className="text-[18px] font-medium leading-none tracking-[-0.02em] text-white">{settings.siteName}</span>
+        <div className="flex items-center gap-2.5">
+          <img src="/tradecircle-logo.jpeg" alt={settings.siteName} className="h-7 w-7 rounded-[6px] object-cover" />
+          <span className="text-[18px] font-medium leading-none tracking-[-0.02em] text-white">{settings.siteName}</span>
+        </div>
         {settings.supportUrl && (
           <a href={settings.supportUrl} target="_blank" rel="noreferrer" className="ef-nav">
             <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2.5} /> Support
@@ -240,7 +243,7 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
               placeholder="e.g. 13349"
               className="ef-input h-12 pl-11 text-[16px]"
               value={csClientId}
-              onChange={(e) => setCsClientId(e.target.value.replace(/D/g, ""))}
+              onChange={(e) => setCsClientId(e.target.value.replace(/\D/g, ""))}
             />
           </div>
           <label className="ef-label mt-5" htmlFor="cs-phone">
@@ -256,7 +259,7 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
               placeholder="+91 98765 43210"
               className="ef-input h-12 pl-11 text-[16px]"
               value={csPhone}
-              onChange={(e) => setCsPhone(e.target.value.replace(/[^d+s-]/g, ""))}
+              onChange={(e) => setCsPhone(e.target.value.replace(/[^\d+\s-]/g, ""))}
             />
           </div>
         </>

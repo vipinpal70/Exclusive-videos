@@ -36,7 +36,7 @@ export const POST = adminRoute(async (req, _ctx, admin) => {
     }
 
     if (type === "xm") {
-      const id = String(email ?? "").replace(/s+/g, "");
+      const id = String(email ?? "").replace(/\s+/g, "");
       if (!isLoginId(id)) return fail("Enter an MT5 account ID (numbers only).");
       const x = await checkXmAccount(id, s);
       if (!x.found) return json({ ok: true, message: `XM API reachable — account ${id} isn't under your affiliation.` });
@@ -52,7 +52,7 @@ export const POST = adminRoute(async (req, _ctx, admin) => {
     }
 
     if (type === "coinswitch") {
-      const id = Number(String(email ?? "").replace(/s+/g, ""));
+      const id = Number(String(email ?? "").replace(/\s+/g, ""));
       if (!Number.isSafeInteger(id) || id <= 0) return fail("Enter a CoinSwitch client ID (numbers only).");
       let lead = await cachedLead(id);
       if (!lead) {
