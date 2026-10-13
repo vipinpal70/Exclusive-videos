@@ -34,7 +34,7 @@ export const SETTING_DEFS: SettingDef[] = [
     default: "Use the Elefin trading account you already have. Your eligibility, Telegram delivery and the full mentorship series are waiting.",
     help: "Short text shown under the hero title.",
   },
-  { key: "signup_url", label: "Elefin sign-up / referral link", type: "url", group: "general", default: "", help: "Shown to visitors who are not yet eligible.", placeholder: "https://..." },
+  { key: "signup_url", label: "Elefin sign-up / referral link", type: "url", group: "general", default: "https://partners.elefin.com/go/YASH", help: "Shown to visitors who are not yet eligible.", placeholder: "https://..." },
   { key: "support_url", label: "Support link", type: "url", group: "general", default: "", help: "Telegram or website where users can get help.", placeholder: "https://t.me/yoursupport" },
 
   // Elefin API
@@ -221,7 +221,7 @@ export async function getPublicSettings() {
     siteName: s.site_name,
     heroTitle: s.hero_title,
     heroSubtitle: s.hero_subtitle,
-    signupUrl: s.signup_url,
+    signupUrl: s.signup_url?.trim() || "https://partners.elefin.com/go/YASH",
     supportUrl: s.support_url,
     otpEnabled: bool(s.otp_enabled),
     botUsername: s.telegram_bot_username,

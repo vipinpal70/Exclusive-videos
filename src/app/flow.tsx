@@ -211,6 +211,11 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
 
   const minLots = isXm ? settings.xmMinLots : settings.minLots;
   const videosText = settings.videoCount > 1 ? ` all ${settings.videoCount} videos` : settings.videoCount === 1 ? " the video" : " the videos";
+  const signupUrl = isCs
+    ? settings.csSignupUrl
+    : isXm
+    ? settings.xmSignupUrl
+    : settings.signupUrl || "https://partners.elefin.com/go/YASH";
 
   return (
     <form onSubmit={submit}>
@@ -388,10 +393,10 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
             : `Use the email of your Elefin trading account. You need at least ${minLots} traded lot${minLots === 1 ? "" : "s"} to unlock`}
           {videosText}.
         </p>
-        {(isCs ? settings.csSignupUrl : isXm ? settings.xmSignupUrl : settings.signupUrl) && (
+        {signupUrl && (
           <p>
             Not {isCs ? "a" : "an"} {BROKER_NAME[broker]} client yet?{" "}
-            <a href={isCs ? settings.csSignupUrl : isXm ? settings.xmSignupUrl : settings.signupUrl} target="_blank" rel="noreferrer" className="ef-link">
+            <a href={signupUrl} target="_blank" rel="noreferrer" className="ef-link underline">
               Open {isCs ? "a" : "an"} {BROKER_NAME[broker]} account
             </a>
             .

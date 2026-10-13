@@ -30,7 +30,7 @@ export const POST = publicRoute(async (req) => {
 
   if (!result.found) {
     await logLookup(email, false, false, null, result.message, ip);
-    return fail("We couldn't find an Elefin account with this email.", 404, { code: "not_found", signupUrl: s.signup_url || null });
+    return fail("We couldn't find an Elefin account with this email.", 404, { code: "not_found", signupUrl: s.signup_url?.trim() || "https://partners.elefin.com/go/YASH" });
   }
 
   const elig = checkEligibility(result.client, s);
@@ -39,7 +39,7 @@ export const POST = publicRoute(async (req) => {
 
   if (member.is_blocked) return fail("Access for this account has been disabled. Please contact support.", 403, { code: "blocked" });
   if (!elig.eligible) {
-    return fail(elig.reason!, 403, { code: "not_eligible", lots: elig.lots, minLots: elig.minLots, signupUrl: s.signup_url || null });
+    return fail(elig.reason!, 403, { code: "not_eligible", lots: elig.lots, minLots: elig.minLots, signupUrl: s.signup_url?.trim() || "https://partners.elefin.com/go/YASH" });
   }
 
   const otp = bool(s.otp_enabled);
