@@ -21,7 +21,6 @@ export const GET = adminRoute(async () => {
     expired: t.expired,
     expiresAt: t.expiresAt?.toISOString() ?? null,
     phone: s.cs_phone || "",
-    awaitingPin: !!s.cs_refresh_token,
     leadsCached: Number(count?.c ?? 0),
     lastSyncAt: s.cs_last_sync_at || null,
     statuses: statuses.map((r) => ({ field: r.field, value: r.value ?? "(empty)", count: Number(r.n) })),

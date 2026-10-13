@@ -1,55 +1,92 @@
 import "server-only";
-import crypto from "crypto";
-import { query, queryOne } from "./db";
-import { bool, getSettings, num, setSettings, type Settings } from "./settings";
+import { query } from "./db";
+import { setSettings, type Settings } from "./settings";
 
 /*
- * CoinSwitch affiliate leads API.
- * Login (auth.coinswitch.co): 1) send OTP to the admin's phone  2) verify OTP → refresh_token
- *                             3) verify PIN with the refresh token → 24-hour access_token (JWT)
- * Leads (coinswitch.co): GET /pro/api/v1/affiliate/leads?page=N, 500 per page from page 0,
- *                        authenticated with the access token in the "st" cookie.
- * Leads carry no email or full phone number (only the last 4 digits) and there is no single-client
- * lookup, so leads are cached in the cs_leads table and never exposed to the public website.
+ * CoinSwitch web API (https://coinswitch.co/pro/api/v1). Everything is cookie-based:
+ *   1) POST /auth/init/auth    { phone_number, entity_type: "SMS" }              → SMS OTP
+ *   2) POST /auth/verify/auth  { phone_number, proof, referral_additional_data } → "rft" cookie (refresh, ~28 days)
+ *   3) POST /auth/verify/pin   { pin } with rft                                  → "st" cookie (access token)
+ * With rft + st:
+ *   GET  /affiliate/profile                → the referrer's { affiliate_name, ref_code }
+ *   GET  /kyc/kyc_progress_status          → { basic_kyc_status, … } ("PASS" when done)
+ *   POST /feature-tracker/fetch-initialise/user-progress { platform: "WEB" } → { user_id } (= client ID in leads)
+ *   GET  /affiliate/leads?page=N           → the partner's leads, 500 per page (partner login only)
+ *
+ * Website clients log in with their own phone, OTP and PIN. Their CoinSwitch cookies are only kept
+ * (encrypted, in the visitor's browser) for the few minutes the login takes, and never stored on the server.
+ * The partner (admin) login is only used to fetch leads for bulk block / unblock.
  */
 
-const AUTH_BASE = "https://auth.coinswitch.co/auth/api/v1";
-const LEADS_URL = "https://coinswitch.co/pro/api/v1/affiliate/leads";
+const API = "https://coinswitch.co/pro/api/v1";
+const LEADS_URL = `${API}/affiliate/leads`;
 
 export class CsError extends Error {
   constructor(
     message: string,
-    public code?: "expired" | "not_connected"
+    public code?: "expired" | "not_connected" | "new_user" | "no_pin"
   ) {
     super(message);
   }
 }
 
-const appHeaders = () => ({
-  "Content-Type": "application/json",
-  "x-app-version": "6.10.0",
-  "x-user-platform": "android",
-  "x-request-id": crypto.randomUUID(),
-});
+/** Cookies CoinSwitch has set during a login (name → value). */
+export type CsJar = Record<string, string>;
 
-async function authCall<T>(path: string, body: unknown, extra: Record<string, string> = {}): Promise<T> {
+const cookieHeader = (jar: CsJar) =>
+  Object.entries(jar)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+
+function absorbCookies(res: Response, jar: CsJar): CsJar {
+  const next = { ...jar };
+  for (const line of res.headers.getSetCookie?.() ?? []) {
+    const [pair, ...attrs] = line.split(";");
+    const i = pair.indexOf("=");
+    if (i <= 0) continue;
+    const name = pair.slice(0, i).trim();
+    const value = pair.slice(i + 1).trim();
+    const expired = attrs.some((a) => /^\s*max-age\s*=\s*(0|-)/i.test(a));
+    if (!value || expired) delete next[name];
+    else if (value.length <= 2048) next[name] = value; // keeps the jar small enough to fit in a cookie
+  }
+  return next;
+}
+
+async function csCall<T>(path: string, jar: CsJar, body?: unknown): Promise<{ data: T; jar: CsJar }> {
   let res: Response;
   try {
-    res = await fetch(`${AUTH_BASE}${path}`, {
-      method: "POST",
-      headers: { ...appHeaders(), ...extra },
-      body: JSON.stringify(body),
+    res = await fetch(`${API}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Accept: "application/json",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        Origin: "https://coinswitch.co",
+        Referer: "https://coinswitch.co/pro/",
+        ...(Object.keys(jar).length ? { cookie: cookieHeader(jar) } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
       signal: AbortSignal.timeout(30000),
     });
   } catch (e) {
     throw new CsError(`Could not reach CoinSwitch: ${e instanceof Error ? e.message : e}`);
   }
-  const json = (await res.json().catch(() => null)) as { success?: boolean; msg?: string; message?: string; data?: T } | null;
-  if (!res.ok || json?.success === false) {
-    throw new CsError(json?.msg || json?.message || `CoinSwitch returned HTTP ${res.status}`);
+  const json = (await res.json().catch(() => null)) as {
+    status?: string;
+    success?: boolean;
+    msg?: string;
+    err?: string;
+    message?: string;
+    data?: T;
+  } | null;
+  const ok = res.ok && !!json && (json.status === "success" || json.success === true);
+  if (!ok) {
+    const message = String(json?.msg || json?.err || json?.message || "").trim();
+    if (res.status === 401 || res.status === 403) throw new CsError(message || "The CoinSwitch login has expired. Please log in again.", "expired");
+    throw new CsError(message || `CoinSwitch returned HTTP ${res.status}`);
   }
-  return (json?.data ?? {}) as T;
+  return { data: (json!.data ?? {}) as T, jar: absorbCookies(res, jar) };
 }
 
 /** Normalises a phone number to "+<digits>"; numbers without a country code are treated as Indian (+91). */
@@ -60,45 +97,117 @@ export function normalizePhone(input: string) {
 }
 export const lastFour = (phone: string) => phone.replace(/\D/g, "").slice(-4);
 
-/** Step 1: CoinSwitch sends an SMS OTP to the admin's registered phone. */
-export async function sendLoginOtp(phone: string) {
-  await authCall("/init/auth", { phone_number: normalizePhone(phone), entity_type: "SMS" });
+/** Step 1: CoinSwitch texts an OTP to the phone. Returns any cookies set, to carry into step 2. */
+export async function sendOtp(phone: string): Promise<CsJar> {
+  const r = await csCall("/auth/init/auth", {}, { phone_number: phone, entity_type: "SMS" });
+  return r.jar;
 }
 
-/** Step 2: OTP → refresh token. */
-export async function verifyLoginOtp(phone: string, otp: string) {
-  const data = await authCall<{ refresh_token?: string }>("/verify/auth", {
-    phone_number: normalizePhone(phone),
-    proof: otp.trim(),
+/** Step 2: OTP → "rft" cookie. Rejects numbers that aren't CoinSwitch accounts yet or have no PIN. */
+export async function verifyOtp(phone: string, otp: string, jar: CsJar): Promise<CsJar> {
+  const r = await csCall<{ is_new_user?: boolean; pin_exists?: boolean }>("/auth/verify/auth", jar, {
+    phone_number: phone,
+    proof: otp,
     referral_additional_data: {},
   });
-  if (!data.refresh_token) throw new CsError("CoinSwitch didn’t return a refresh token. Please start again.");
-  return data.refresh_token;
+  if (r.data.is_new_user) throw new CsError("This phone number doesn’t have a CoinSwitch account yet.", "new_user");
+  if (r.data.pin_exists === false) throw new CsError("Set up your CoinSwitch PIN in the CoinSwitch app first, then try again.", "no_pin");
+  if (!r.jar.rft) throw new CsError("CoinSwitch didn’t complete the login. Please start again.");
+  return r.jar;
 }
 
-/** Step 3: refresh token + PIN → 24-hour access token. */
-export async function verifyLoginPin(refreshToken: string, pin: string) {
-  const data = await authCall<{ access_token?: string }>("/verify/pin", { pin: pin.trim() }, { "x-refresh-token": refreshToken });
-  if (!data.access_token) throw new CsError("CoinSwitch didn’t return an access token.");
-  return data.access_token;
+/** Step 3: PIN → "st" cookie (the access token). */
+export async function verifyPin(pin: string, jar: CsJar): Promise<{ jar: CsJar; expiresAt: Date }> {
+  const r = await csCall<{ session_token_validity?: number }>("/auth/verify/pin", jar, { pin });
+  if (!r.jar.st) throw new CsError("CoinSwitch didn’t complete the login. Please start again.");
+  const v = Number(r.data.session_token_validity);
+  return { jar: r.jar, expiresAt: Number.isFinite(v) && v > 0 ? new Date(v < 1e12 ? v * 1000 : v) : tokenExpiry(r.jar.st) };
 }
 
-/** Expiry from the JWT's exp claim; falls back to 24 hours from now. */
+/** The affiliate who referred the logged-in user (empty ref_code when nobody did). */
+export async function affiliateProfile(jar: CsJar) {
+  const r = await csCall<{ affiliate_name?: string; ref_code?: string }>("/affiliate/profile", jar);
+  return { affiliateName: String(r.data.affiliate_name ?? ""), refCode: String(r.data.ref_code ?? "") };
+}
+
+export async function kycStatus(jar: CsJar) {
+  const r = await csCall<Record<string, unknown>>("/kyc/kyc_progress_status", jar);
+  return r.data;
+}
+
+/** The logged-in user's CoinSwitch user ID (the client ID shown in the partner's leads). */
+export async function userId(jar: CsJar): Promise<number> {
+  const r = await csCall<{ user_id?: number | string }>("/feature-tracker/fetch-initialise/user-progress", jar, { platform: "WEB" });
+  const id = Number(r.data.user_id);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new CsError("CoinSwitch didn’t return your account ID. Please try again.");
+  return id;
+}
+
+/** Ref codes from the setting (comma or space separated). Codes are case-sensitive. */
+export const refCodes = (s: Settings) =>
+  (s.cs_ref_code ?? "")
+    .split(/[\s,]+/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+export const kycPassed = (status: unknown) => typeof status === "string" && /^PASS(ED)?$/i.test(status.trim());
+
+export interface CsCheck {
+  clientId: number;
+  affiliated: boolean;
+  eligible: boolean;
+  reason: string | null;
+  affiliateName: string;
+  basicKyc: string | null;
+}
+
+/** Runs the post-login checks: the referrer's ref code, then (when required) basic KYC. */
+export async function checkLoggedInUser(jar: CsJar, s: Settings): Promise<CsCheck> {
+  const profile = await affiliateProfile(jar);
+  const clientId = await userId(jar);
+  const affiliated = !!profile.refCode && refCodes(s).includes(profile.refCode);
+  const requireKyc = s.cs_require_kyc === "1";
+  let basicKyc: string | null = null;
+  if (affiliated && requireKyc) {
+    const k = await kycStatus(jar);
+    basicKyc = typeof k.basic_kyc_status === "string" ? k.basic_kyc_status : null;
+  }
+  const reason = !affiliated
+    ? "Your CoinSwitch account wasn’t opened with our referral link."
+    : requireKyc && !kycPassed(basicKyc)
+      ? "To unlock the videos, please complete your basic KYC on CoinSwitch."
+      : null;
+  return { clientId, affiliated, eligible: !reason, reason, affiliateName: profile.affiliateName, basicKyc };
+}
+
+/** Expiry from the token's "validity" (CoinSwitch) or "exp" claim; falls back to 24 hours from now. */
 export function tokenExpiry(jwt: string): Date {
   try {
     const payload = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf8"));
-    if (typeof payload.exp === "number") return new Date(payload.exp * 1000);
+    const t = Number(payload.validity ?? payload.exp);
+    if (Number.isFinite(t) && t > 0) return new Date(t < 1e12 ? t * 1000 : t);
   } catch {
     /* not a readable JWT */
   }
   return new Date(Date.now() + 24 * 3600_000);
 }
 
+/** The partner login, used only to fetch leads for bulk block / unblock. */
 export function tokenState(s: Settings) {
   const expiresAt = s.cs_token_expires_at ? new Date(s.cs_token_expires_at) : null;
   const connected = !!s.cs_access_token;
   const expired = !connected || !expiresAt || expiresAt.getTime() <= Date.now();
   return { connected, expired, expiresAt };
+}
+
+/** Saves the partner login (rft + st cookies) after the admin's OTP + PIN. */
+export async function savePartnerLogin(phone: string, jar: CsJar, expiresAt: Date) {
+  await setSettings({
+    cs_phone: phone,
+    cs_refresh_token: jar.rft ?? "",
+    cs_access_token: jar.st ?? "",
+    cs_token_expires_at: expiresAt.toISOString(),
+  });
 }
 
 export interface CsLead {
@@ -126,13 +235,13 @@ export interface LeadsPage {
 /** One page (500 leads) of the affiliate lead list. */
 export async function fetchLeadsPage(page: number, s: Settings): Promise<LeadsPage> {
   const t = tokenState(s);
-  if (!t.connected) throw new CsError("CoinSwitch isn’t connected. Get an access token in Settings → CoinSwitch.", "not_connected");
-  if (t.expired) throw new CsError("The CoinSwitch access token has expired. Get a new one in Settings → CoinSwitch.", "expired");
+  if (!t.connected) throw new CsError("CoinSwitch isn’t connected. Log in to your partner account in Settings → CoinSwitch.", "not_connected");
+  if (t.expired) throw new CsError("The CoinSwitch access token has expired. Log in again in Settings → CoinSwitch.", "expired");
 
   let res: Response;
   try {
     res = await fetch(`${LEADS_URL}?page=${page}`, {
-      headers: { Accept: "application/json", cookie: `st=${s.cs_access_token}` },
+      headers: { Accept: "application/json", cookie: s.cs_refresh_token ? `rft=${s.cs_refresh_token}; st=${s.cs_access_token}` : `st=${s.cs_access_token}` },
       cache: "no-store",
       signal: AbortSignal.timeout(60000),
     });
@@ -140,7 +249,7 @@ export async function fetchLeadsPage(page: number, s: Settings): Promise<LeadsPa
     throw new CsError(`Could not reach CoinSwitch: ${e instanceof Error ? e.message : e}`);
   }
   if (res.status === 401 || res.status === 403) {
-    throw new CsError("CoinSwitch rejected the access token. Get a new one in Settings → CoinSwitch.", "expired");
+    throw new CsError("CoinSwitch rejected the partner login. Log in again in Settings → CoinSwitch.", "expired");
   }
   const json = (await res.json().catch(() => null)) as {
     success?: boolean;
@@ -225,49 +334,6 @@ export async function saveLeads(clients: CsLead[]) {
 
 export const markSynced = () => setSettings({ cs_last_sync_at: new Date().toISOString() });
 
-// One background sync at a time per server process.
-let running: Promise<boolean> | null = null;
-
-/**
- * Re-reads the lead list from page 0 into the cache. With `untilClientId`, stops as soon as that
- * client has been seen (new sign-ups usually appear early). Returns whether that client was found.
- */
-export function syncLeads(s: Settings, untilClientId?: number): Promise<boolean> {
-  if (running) return running.then(async () => (untilClientId ? !!(await cachedLead(untilClientId)) : true));
-  running = (async () => {
-    let page = 0;
-    let totalPages = 1;
-    while (page < totalPages) {
-      const r = await fetchLeadsPage(page, s);
-      totalPages = r.totalPages;
-      await saveLeads(r.clients);
-      if (untilClientId && r.clients.some((c) => Number(c.client_id) === untilClientId)) return true;
-      page++;
-    }
-    await markSynced();
-    return untilClientId ? !!(await cachedLead(untilClientId)) : true;
-  })().finally(() => {
-    running = null;
-  });
-  return running;
-}
-
-export interface CachedLead {
-  client_id: string;
-  phone_last4: string | null;
-  user_name: string | null;
-  signup_date: Date | null;
-  last_activity_date: Date | null;
-  user_stage: string | null;
-  kyc_status: string | null;
-  bank_status: string | null;
-  deposit_status: string | null;
-  trade_status: string | null;
-  synced_at: Date;
-}
-
-export const cachedLead = (clientId: number) => queryOne<CachedLead>("SELECT * FROM cs_leads WHERE client_id = ?", [clientId]);
-
 /**
  * A CoinSwitch step counts as complete unless its status is NOT_STARTED, PENDING, *PROGRESS*,
  * a negative value (false / 0 / no / none) or empty.
@@ -277,48 +343,4 @@ export function isDone(status: string | null | undefined) {
   if (!s) return false;
   if (s.startsWith("{") || s.startsWith("[")) return false; // an unrecognised object/array shape: be cautious
   return !/NOT[_\s-]?STARTED|PENDING|PROGRESS|^(false|0|no|none)$/i.test(s);
-}
-
-export interface CsCheck {
-  found: boolean;
-  phoneMatches: boolean;
-  lead: CachedLead | null;
-  eligible: boolean;
-  reason: string | null;
-}
-
-/**
- * Checks one client against the cached leads, refreshing from CoinSwitch when the client isn't
- * cached yet and the cache is older than the configured interval.
- */
-export async function checkCsClient(clientId: number, phone: string, settings?: Settings): Promise<CsCheck> {
-  const s = settings ?? (await getSettings());
-  let lead = await cachedLead(clientId);
-  if (!lead) {
-    const lastSync = s.cs_last_sync_at ? Date.parse(s.cs_last_sync_at) : 0;
-    const maxAge = Math.max(1, num(s.cs_cache_minutes, 15)) * 60_000;
-    if (Date.now() - lastSync > maxAge || !s.cs_last_sync_at) {
-      await syncLeads(s, clientId);
-      lead = await cachedLead(clientId);
-    }
-  }
-  // Same answer for "unknown client ID" and "phone doesn't match", so client IDs can't be probed.
-  const notFound = {
-    found: false,
-    phoneMatches: false,
-    lead: null,
-    eligible: false,
-    reason: "We couldn’t find a CoinSwitch account in our referrals with this client ID and phone number.",
-  };
-  if (!lead || !lead.phone_last4 || lead.phone_last4 !== lastFour(phone)) return notFound;
-
-  const missing: string[] = [];
-  if (bool(s.cs_require_kyc) && !isDone(lead.kyc_status)) missing.push("complete KYC");
-  if (bool(s.cs_require_bank) && !isDone(lead.bank_status)) missing.push("add a bank account");
-  if (bool(s.cs_require_deposit) && !isDone(lead.deposit_status)) missing.push("make a deposit");
-  if (bool(s.cs_require_trade) && !isDone(lead.trade_status)) missing.push("make a trade");
-  const reason = missing.length
-    ? `To unlock the videos, please ${missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}` : missing[0]} on CoinSwitch.`
-    : null;
-  return { found: true, phoneMatches: true, lead, eligible: !reason, reason };
 }

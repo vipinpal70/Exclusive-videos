@@ -74,8 +74,8 @@ export default function Dashboard() {
           >
             <AlertTriangle className="h-4 w-4 shrink-0" />
             {s.coinswitch.expired
-              ? "The CoinSwitch access token has expired. New CoinSwitch clients can’t verify until you get a new one."
-              : `The CoinSwitch access token expires ${new Date(s.coinswitch.expiresAt!).toLocaleString()}. Refresh it soon.`}
+              ? "The CoinSwitch partner login has expired. Bulk block / unblock can only use the saved lead list until you log in again."
+              : `The CoinSwitch partner login expires ${new Date(s.coinswitch.expiresAt!).toLocaleString()}. Log in again soon.`}
             <ArrowRight className="ml-auto h-3.5 w-3.5" />
           </Link>
         )}

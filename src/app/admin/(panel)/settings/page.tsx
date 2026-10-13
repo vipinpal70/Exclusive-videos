@@ -25,7 +25,7 @@ interface Setting {
 const GROUPS = [
   { id: "elefin", title: "Elefin API", desc: "Used to look up clients. The token is sent as a Bearer token on every request." },
   { id: "xm", title: "XM broker", desc: "Let XM clients verify with their MT5 account ID. Uses the XM partners API." },
-  { id: "coinswitch", title: "CoinSwitch", desc: "Let CoinSwitch clients verify with their client ID and phone number. Uses the CoinSwitch affiliate leads API." },
+  { id: "coinswitch", title: "CoinSwitch", desc: "Let CoinSwitch clients verify by logging in with their CoinSwitch phone number, SMS code and PIN. Affiliated means their account carries your referral code." },
   { id: "eligibility", title: "Eligibility", desc: "Rules a client must meet to receive the videos." },
   { id: "telegram", title: "Telegram bot", desc: "Logs members in and delivers the videos with copyMessage." },
   { id: "email", title: "Email verification", desc: "Optionally send a one-time code with Resend to confirm members own their email." },
@@ -367,7 +367,7 @@ function TestPanel({ group }: { group: string }) {
   const [showRaw, setShowRaw] = useState(false);
 
   const type =
-    group === "elefin" || group === "xm" || group === "coinswitch" || group === "telegram" || group === "email" ? group : null;
+    group === "elefin" || group === "xm" || group === "telegram" || group === "email" ? group : null;
   if (!type) return <div />;
   const needsEmail = type !== "telegram";
 
@@ -395,9 +395,7 @@ function TestPanel({ group }: { group: string }) {
                 ? "Client email to look up"
                 : type === "xm"
                   ? "MT5 account ID to look up"
-                  : type === "coinswitch"
-                    ? "Client ID to look up"
-                    : "Send test email to"
+                  : "Send test email to"
             }
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -405,7 +403,7 @@ function TestPanel({ group }: { group: string }) {
         )}
         <button className="btn btn-secondary" onClick={run} disabled={loading || (needsEmail && !email)}>
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {type === "elefin" || type === "xm" || type === "coinswitch" ? "Test lookup" : type === "telegram" ? "Test bot" : "Send test"}
+          {type === "elefin" || type === "xm" ? "Test lookup" : type === "telegram" ? "Test bot" : "Send test"}
         </button>
         <span className="text-[12px] text-[#646b78]">Uses saved values</span>
       </div>

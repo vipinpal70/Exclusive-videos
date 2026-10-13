@@ -93,18 +93,18 @@ export async function upsertXmMember(
   return (await queryOne<Member>("SELECT * FROM members WHERE broker = 'xm' AND broker_account_id = ?", [loginId]))!;
 }
 
-/** Creates or updates a CoinSwitch member from a CoinSwitch eligibility check. */
+/** Creates or updates a CoinSwitch member after they logged in to CoinSwitch on the website. */
 export async function upsertCsMember(
   clientId: number,
   phone: string,
-  check: { eligible: boolean; lead: { user_name: string | null } | null }
+  check: { eligible: boolean; affiliateName: string; basicKyc: string | null }
 ): Promise<Member> {
   await execute(
-    `INSERT INTO members (email, broker, broker_account_id, phone, name, affiliated, lots, eligible, lookup_json, last_lookup_at)
-     VALUES (NULL, 'coinswitch', ?, ?, ?, 1, 0, ?, ?, UTC_TIMESTAMP())
-     ON DUPLICATE KEY UPDATE phone = VALUES(phone), name = COALESCE(VALUES(name), name), eligible = VALUES(eligible),
+    `INSERT INTO members (email, broker, broker_account_id, phone, affiliated, lots, eligible, lookup_json, last_lookup_at)
+     VALUES (NULL, 'coinswitch', ?, ?, 1, 0, ?, ?, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE phone = VALUES(phone), eligible = VALUES(eligible),
        lookup_json = VALUES(lookup_json), last_lookup_at = VALUES(last_lookup_at)`,
-    [String(clientId), phone, check.lead?.user_name || null, check.eligible ? 1 : 0, JSON.stringify(check.lead)]
+    [String(clientId), phone, check.eligible ? 1 : 0, JSON.stringify({ affiliateName: check.affiliateName, basicKyc: check.basicKyc })]
   );
   return (await queryOne<Member>("SELECT * FROM members WHERE broker = 'coinswitch' AND broker_account_id = ?", [String(clientId)]))!;
 }

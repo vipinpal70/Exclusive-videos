@@ -42,6 +42,16 @@ type Filter = "all" | "eligible" | "ineligible" | "linked" | "delivered" | "bloc
 
 const BROKER_NAME = { elefin: "Elefin", xm: "XM", coinswitch: "CoinSwitch" } as const;
 
+/** What the CoinSwitch check saved: the referrer's name and the basic KYC status (when it was required). */
+function csLookup(m: Member): { affiliateName?: string; basicKyc?: string | null } {
+  try {
+    const v: unknown = typeof m.lookup_json === "string" ? JSON.parse(m.lookup_json) : m.lookup_json;
+    return v && typeof v === "object" ? (v as { affiliateName?: string; basicKyc?: string | null }) : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Email for Elefin members, "XM account <id>" for XM members (XM has no emails). */
 const label = (m: Pick<Member, "broker" | "email" | "broker_account_id">) =>
   m.broker === "xm" ? `XM account ${m.broker_account_id}` : m.broker === "coinswitch" ? `CoinSwitch client ${m.broker_account_id}` : (m.email ?? "—");
@@ -161,7 +171,7 @@ function useMemberActions(onChanged: () => void) {
     return [
       ...extra,
       { label: "Send videos now", icon: <Send />, onClick: () => act(m, "deliver"), disabled: !m.telegram_id },
-      { label: `Refresh from ${BROKER_NAME[m.broker]}`, icon: <RefreshCw />, onClick: () => act(m, "refresh") },
+      ...(m.broker === "coinswitch" ? [] : [{ label: `Refresh from ${BROKER_NAME[m.broker]}`, icon: <RefreshCw />, onClick: () => act(m, "refresh") }]),
       { label: "Reset delivery", icon: <RotateCcw />, onClick: () => act(m, "reset_delivery"), disabled: !m.last_delivered_at },
       { label: "Unlink Telegram", icon: <Unlink />, onClick: () => act(m, "unlink_telegram"), disabled: !m.telegram_id },
       m.is_blocked
@@ -380,7 +390,7 @@ function MemberModal({ id, onClose, onChanged }: { id: number | null; onClose: (
         <div className="space-y-4">
           {edit && (
           <div className="flex flex-wrap gap-1.5">
-            <Btn action="refresh" icon={<RefreshCw className="h-3 w-3" />} label="Refresh" />
+            {m.broker !== "coinswitch" && <Btn action="refresh" icon={<RefreshCw className="h-3 w-3" />} label="Refresh" />}
             {m.telegram_id && <Btn action="deliver" icon={<Send className="h-3 w-3" />} label="Send videos" />}
             {m.last_delivered_at && <Btn action="reset_delivery" icon={<RotateCcw className="h-3 w-3" />} label="Reset delivery" />}
             {m.telegram_id && <Btn action="unlink_telegram" icon={<Unlink className="h-3 w-3" />} label="Unlink Telegram" />}
@@ -400,6 +410,8 @@ function MemberModal({ id, onClose, onChanged }: { id: number | null; onClose: (
               <Section title="CoinSwitch">
                 <Row k="Client ID" v={<span className="font-mono text-[12px]">{m.broker_account_id}</span>} />
                 <Row k="Phone" v={m.phone ?? "—"} />
+                <Row k="Referred by" v={csLookup(m).affiliateName || "—"} />
+                <Row k="Basic KYC" v={csLookup(m).basicKyc || "Not checked"} />
                 <Row k="Eligible" v={<StatusBadge ok={!!m.eligible}>{m.eligible ? "Yes" : "No"}</StatusBadge>} />
                 <Row k="Last checked" v={fmtDate(m.last_lookup_at)} />
               </Section>

@@ -22,7 +22,7 @@ export const SETTING_DEFS: SettingDef[] = [
     label: "Site name",
     type: "text",
     group: "general",
-    default: "The Traders' Circle",
+    default: "Elefin Exclusive Mentorship",
     help: "Shown in the page header, browser tab, admin sidebar and email copyright line.",
   },
   { key: "hero_title", label: "Hero title", type: "text", group: "general", default: "Mentorship access", help: "Main heading on the first step of the public page." },
@@ -42,7 +42,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: "elefin_api_token", label: "API token", type: "secret", group: "elefin", default: "", help: "Sent as Authorization: Bearer <token> on every Elefin request." },
 
   // XM broker
-  { key: "xm_enabled", label: "Allow XM clients", type: "boolean", group: "xm", default: "1", help: "Show an XM option on the website so XM clients can verify with their MT5 account ID." },
+  { key: "xm_enabled", label: "Allow XM clients", type: "boolean", group: "xm", default: "0", help: "Show an XM option on the website so XM clients can verify with their MT5 account ID." },
   { key: "xm_api_base", label: "API base URL", type: "url", group: "xm", default: "https://mypartners.xm.com/api", help: "XM partners API, without trailing slash." },
   { key: "xm_api_token", label: "API token", type: "secret", group: "xm", default: "", help: "From XM partners. Sent as Authorization: Bearer <token>." },
   { key: "xm_signup_url", label: "XM sign-up / referral link", type: "url", group: "xm", default: "", help: "Shown to XM clients who aren't under your affiliation or aren't eligible yet.", placeholder: "https://..." },
@@ -128,22 +128,34 @@ export const SETTING_DEFS: SettingDef[] = [
   },
 
   // CoinSwitch
-  { key: "cs_enabled", label: "Allow CoinSwitch clients", type: "boolean", group: "coinswitch", default: "1", help: "Show a CoinSwitch option on the website. Clients verify with their CoinSwitch client ID and phone number." },
-  { key: "cs_signup_url", label: "CoinSwitch sign-up / referral link", type: "url", group: "coinswitch", default: "", help: "Shown to CoinSwitch clients who aren't in your affiliate leads or aren't eligible yet.", placeholder: "https://..." },
-  { key: "cs_require_kyc", label: "Require KYC completed", type: "boolean", group: "coinswitch", default: "0", help: "The lead's KYC status must be complete." },
-  { key: "cs_require_bank", label: "Require bank account added", type: "boolean", group: "coinswitch", default: "0", help: "The lead's bank status must be complete." },
-  { key: "cs_require_deposit", label: "Require a deposit", type: "boolean", group: "coinswitch", default: "0", help: "The lead's deposit status must be complete." },
-  { key: "cs_require_trade", label: "Require a trade", type: "boolean", group: "coinswitch", default: "1", help: "The lead's trade status must be complete." },
   {
-    key: "cs_cache_minutes",
-    label: "Lead list refresh (minutes)",
-    type: "number",
+    key: "cs_enabled",
+    label: "Allow CoinSwitch clients",
+    type: "boolean",
     group: "coinswitch",
-    default: "15",
-    help: "When a client isn't found in the saved lead list and it's older than this, the app fetches the latest leads from CoinSwitch before giving up.",
+    default: "0",
+    help: "Show a CoinSwitch option on the website. Clients log in with their CoinSwitch phone number, SMS code and PIN.",
   },
+  {
+    key: "cs_ref_code",
+    label: "Your CoinSwitch referral code",
+    type: "text",
+    group: "coinswitch",
+    default: "",
+    help: "A client is affiliated when the referral code on their CoinSwitch account matches this exactly (case-sensitive). Separate several codes with commas.",
+    placeholder: "e.g. vGKgolD",
+  },
+  {
+    key: "cs_require_kyc",
+    label: "Require basic KYC passed",
+    type: "boolean",
+    group: "coinswitch",
+    default: "0",
+    help: "The client's CoinSwitch basic KYC status must be PASS.",
+  },
+  { key: "cs_signup_url", label: "CoinSwitch sign-up / referral link", type: "url", group: "coinswitch", default: "", help: "Shown to CoinSwitch clients who didn't sign up with your referral code or aren't eligible yet.", placeholder: "https://..." },
 
-  // Internal: CoinSwitch login state (managed from the CoinSwitch access token panel).
+  // Internal: CoinSwitch partner login for bulk block / unblock (managed from the CoinSwitch panel).
   { key: "cs_phone", label: "CoinSwitch login phone", type: "text", group: "coinswitch", default: "", internal: true },
   { key: "cs_refresh_token", label: "CoinSwitch refresh token", type: "secret", group: "coinswitch", default: "", internal: true },
   { key: "cs_access_token", label: "CoinSwitch access token", type: "secret", group: "coinswitch", default: "", internal: true },
@@ -215,10 +227,10 @@ export async function getPublicSettings() {
     botUsername: s.telegram_bot_username,
     telegramLoginReady: !!(s.telegram_client_id && s.telegram_client_secret),
     minLots: num(s.min_lots),
-    xmEnabled: bool(s.xm_enabled),
+    xmEnabled: bool(s.xm_enabled) && !!s.xm_api_token,
     xmMinLots: num(s.xm_min_lots),
     xmSignupUrl: s.xm_signup_url,
-    csEnabled: bool(s.cs_enabled),
+    csEnabled: bool(s.cs_enabled) && !!s.cs_ref_code.trim(),
     csSignupUrl: s.cs_signup_url,
     xmLotsWindowDays: num(s.xm_lots_window_days, 90),
   };

@@ -3,7 +3,7 @@
 export const PERMISSIONS = [
   { key: "settings.elefin", label: "Edit Elefin API settings", desc: "API base URL and token, and run test lookups." },
   { key: "settings.xm", label: "Edit XM settings", desc: "XM API token, XM eligibility rules and test lookups." },
-  { key: "settings.coinswitch", label: "Edit CoinSwitch settings", desc: "Get the CoinSwitch access token, sync leads and set CoinSwitch eligibility rules." },
+  { key: "settings.coinswitch", label: "Edit CoinSwitch settings", desc: "Set the CoinSwitch referral code and rules, and log in to the partner account used to fetch leads for bulk tools." },
   { key: "settings.eligibility", label: "Edit eligibility rules", desc: "Minimum lots, affiliation, deposit and re-delivery rules." },
   { key: "settings.email", label: "Edit OTP email settings", desc: "Turn email OTP on or off, Resend key, sender and email header." },
   { key: "settings.site", label: "Edit site settings", desc: "Site name, hero text, sign-up and support links." },

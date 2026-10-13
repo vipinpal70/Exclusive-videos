@@ -1,9 +1,8 @@
 import { adminRoute, fail, json } from "@/lib/auth";
 import { execute, query, queryOne } from "@/lib/db";
 import { checkEligibility, lookupClient } from "@/lib/elefin";
-import { DeliveryError, deliverVideos, getMember, setPendingVideos, upsertCsMember, upsertMemberFromLookup, upsertXmMember } from "@/lib/members";
+import { DeliveryError, deliverVideos, getMember, setPendingVideos, upsertMemberFromLookup, upsertXmMember } from "@/lib/members";
 import { checkXmAccount } from "@/lib/xm";
-import { checkCsClient, syncLeads } from "@/lib/coinswitch";
 import { getSettings } from "@/lib/settings";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -46,12 +45,8 @@ export const POST = adminRoute<Ctx>(async (req, { params }) => {
     case "refresh": {
       const s = await getSettings();
       if (m.broker === "coinswitch") {
-        // Fetch the latest leads first so statuses are current, then re-check this client.
-        await syncLeads(s, Number(m.broker_account_id));
-        const c = await checkCsClient(Number(m.broker_account_id), m.phone ?? "", s);
-        if (!c.found) return fail("CoinSwitch: this client is no longer in your affiliate leads.");
-        await upsertCsMember(Number(m.broker_account_id), m.phone ?? "", c);
-        return json({ ok: true, message: `Refreshed from CoinSwitch: ${c.eligible ? "eligible" : `not eligible: ${c.reason}`}` });
+        // CoinSwitch is checked with the client's own CoinSwitch login, so only the client can re-check it.
+        return fail("CoinSwitch members are re-checked when they log in with CoinSwitch on the website again.");
       }
       if (m.broker === "xm") {
         const x = await checkXmAccount(m.broker_account_id!, s);

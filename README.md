@@ -3,7 +3,7 @@
 A Next.js app that verifies Elefin broker clients and delivers mentorship videos to eligible clients on Telegram. Everything except the database connection is managed from a built-in admin panel.
 
 - **Stack:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, MySQL (`mysql2`)
-- **Integrations:** Elefin broker API, XM partners API, CoinSwitch affiliate leads API, Telegram Bot API plus Telegram Login (OpenID Connect), Resend (email OTP)
+- **Integrations:** Elefin broker API, XM partners API, CoinSwitch web API (client login + affiliate leads), Telegram Bot API plus Telegram Login (OpenID Connect), Resend (email OTP)
 
 ---
 
@@ -106,15 +106,19 @@ XM endpoints used: `GET /traders/{loginId}` (affiliation check; 404 means not yo
 
 ## CoinSwitch (optional)
 
-Turn on **Settings → CoinSwitch → Allow CoinSwitch clients** to let CoinSwitch clients verify with their **client ID and phone number**. CoinSwitch's leads only include the last 4 digits of the phone, so the app matches the client ID and checks those digits. The full phone number is saved on the member. Both "unknown client ID" and "wrong phone" get the same message, so client IDs can't be probed.
+Set **Settings → CoinSwitch → Your CoinSwitch referral code** and turn on **Allow CoinSwitch clients**. The website option only appears when both are set.
 
-**Access token (renew every 24 hours).** In Settings → CoinSwitch, click **Get access token**: enter your partner phone number, the SMS code, then your PIN. The token is saved in the database and lasts 24 hours; the PIN is never stored. The panel and the Overview page show when it expires. **Tip:** add a repeating reminder in your calendar app (or any reminder app) to go off every 20 to 23 hours, so you can refresh the token before it expires.
+**How clients verify.** The client logs in to CoinSwitch through the website with their own **phone number → SMS code → PIN** (`/auth/init/auth`, `/auth/verify/auth`, `/auth/verify/pin` on `https://coinswitch.co/pro/api/v1`). With that login the app reads:
 
-**Lead list.** CoinSwitch has no single-client lookup, so the app keeps a server-side copy of your leads (`cs_leads`, 500 per page from `GET https://coinswitch.co/pro/api/v1/affiliate/leads`). **Sync leads now** refreshes it with progress. When someone verifies and isn't in the saved list, the app fetches the latest leads first, if the list is older than the refresh setting. The website endpoint only ever returns the current user's own result. While the token is expired, clients already in the saved list can still verify.
+- `GET /affiliate/profile`: the `ref_code` of the affiliate who referred them. It must match your referral code exactly (case-sensitive; several codes can be separated by commas).
+- `GET /kyc/kyc_progress_status`: only when **Require basic KYC passed** is on; `basic_kyc_status` must be `PASS`.
+- `POST /feature-tracker/fetch-initialise/user-progress`: the client's `user_id`, saved as their CoinSwitch client ID (the same ID as in your leads).
 
-**Eligibility switches:** require KYC completed, bank account added, a deposit, and/or a trade (trade is on by default). A step counts as **not done** when its status is `NOT_STARTED`, `PENDING`, contains `PROGRESS` (for example `IN_PROGRESS`), is `false`, `0`, `no` or `none`, or is empty. Any other status counts as completed. The panel lists the status values CoinSwitch actually sends.
+Between steps, CoinSwitch's login cookies (`rft`, then `st`) are kept in an encrypted cookie in the visitor's browser for at most 10 minutes. After the check they are thrown away: the client's CoinSwitch login and PIN are never stored. The member is saved with their client ID and phone number. Clients whose phone isn't a CoinSwitch account, or whose account carries another referral code, see the sign-up link.
 
-**Bulk block and unblock for CoinSwitch:** rules are **no activity / activity in the last N days** (from `last_activity_date`), plus **hasn't deposited / has deposited** and **hasn't traded / has traded**. It refreshes the lead list first. If CoinSwitch can't be reached (for example an expired token), you can continue with the saved list.
+**Partner login (bulk tools only).** Bulk block / unblock needs your affiliate leads (`GET /affiliate/leads`, 500 per page). In Settings → CoinSwitch, click **Log in** and enter your partner phone, the SMS code and your PIN; the `rft` and `st` cookies are saved (the PIN is not). Website verification doesn't use it.
+
+**Bulk block and unblock for CoinSwitch:** rules are **no activity / activity in the last N days** (from `last_activity_date`), plus **hasn't deposited / has deposited** and **hasn't traded / has traded**. It refreshes the lead list first. If CoinSwitch can't be reached (for example an expired partner login), you can continue with the saved list. A status counts as **not done** when it is `NOT_STARTED`, `PENDING`, contains `PROGRESS`, is `false`, `0`, `no` or `none`, or is empty.
 
 ## Admin panel
 

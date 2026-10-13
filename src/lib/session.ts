@@ -1,4 +1,4 @@
-import { SignJWT, jwtVerify } from "jose";
+import { EncryptJWT, SignJWT, jwtDecrypt, jwtVerify } from "jose";
 
 export const ADMIN_COOKIE = "ev_admin";
 export const USER_COOKIE = "ev_user";
@@ -52,3 +52,30 @@ export const cookieOptions = (maxAge?: number) => ({
   path: "/",
   maxAge,
 });
+
+/** AES-256-GCM key derived from SESSION_SECRET, for short-lived encrypted cookies. */
+async function encKey() {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`sealed:${process.env.SESSION_SECRET ?? ""}`));
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 16) throw new Error("SESSION_SECRET env var is missing or too short");
+  return new Uint8Array(digest);
+}
+
+/** Encrypts (not just signs) a payload, so the browser can hold it without being able to read it. */
+export async function sealData(payload: object, maxAgeSeconds: number, audience: string) {
+  return new EncryptJWT({ ...payload })
+    .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
+    .setIssuedAt()
+    .setAudience(audience)
+    .setExpirationTime(Math.floor(Date.now() / 1000) + maxAgeSeconds)
+    .encrypt(await encKey());
+}
+
+export async function openData<T>(token: string | undefined, audience: string): Promise<T | null> {
+  if (!token) return null;
+  try {
+    const { payload } = await jwtDecrypt(token, await encKey(), { audience });
+    return payload as T;
+  } catch {
+    return null;
+  }
+}

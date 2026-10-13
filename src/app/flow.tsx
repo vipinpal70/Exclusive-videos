@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, ChevronLeft, Hash, Loader2, Mail, Phone } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Hash, KeyRound, Loader2, Mail, MessageSquare, Phone } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
 import { api, ApiError } from "@/lib/api";
@@ -81,10 +81,7 @@ export function Flow({ settings, initialMember }: { settings: PublicSettings; in
   return (
     <div className="ef-page flex min-h-screen flex-col">
       <header className="flex items-center justify-between px-6 py-7 sm:px-[60px]">
-        <div className="flex items-center gap-2.5">
-          <img src="/tradecircle-logo.jpeg" alt={settings.siteName} className="h-7 w-7 rounded-[6px] object-cover" />
-          <span className="text-[18px] font-medium leading-none tracking-[-0.02em] text-white">{settings.siteName}</span>
-        </div>
+        <span className="text-[18px] font-medium leading-none tracking-[-0.02em] text-white">{settings.siteName}</span>
         {settings.supportUrl && (
           <a href={settings.supportUrl} target="_blank" rel="noreferrer" className="ef-nav">
             <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2.5} /> Support
@@ -161,8 +158,11 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
   const [broker, setBroker] = useState<BrokerChoice>("elefin");
   const [email, setEmail] = useState("");
   const [loginId, setLoginId] = useState("");
-  const [csClientId, setCsClientId] = useState("");
   const [csPhone, setCsPhone] = useState("");
+  const [csStep, setCsStep] = useState<"phone" | "otp" | "pin">("phone");
+  const [csSentTo, setCsSentTo] = useState("");
+  const [csOtp, setCsOtp] = useState("");
+  const [csPin, setCsPin] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const isXm = broker === "xm";
@@ -176,16 +176,34 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
     setLoading(true);
     setError("");
     try {
+      if (isCs && csStep === "phone") {
+        const r = await api<{ phone: string }>("/api/verify/coinswitch", { body: { step: "otp", phone: csPhone } });
+        setCsSentTo(r.phone);
+        setCsOtp("");
+        setCsStep("otp");
+        return;
+      }
+      if (isCs && csStep === "otp") {
+        await api("/api/verify/coinswitch", { body: { step: "verify", otp: csOtp } });
+        setCsPin("");
+        setCsStep("pin");
+        return;
+      }
       const r = isXm
         ? await api<{ member: Member }>("/api/verify/xm", { body: { loginId } })
         : isCs
-          ? await api<{ member: Member }>("/api/verify/coinswitch", { body: { clientId: csClientId, phone: csPhone } })
+          ? await api<{ member: Member }>("/api/verify/coinswitch", { body: { step: "pin", pin: csPin } })
           : await api<{ member: Member }>("/api/verify/email", { body: { email } });
       onDone(r.member);
     } catch (err) {
       if (err instanceof ApiError && ["not_found", "not_eligible", "blocked"].includes(String(err.data.code))) {
+        if (isCs) setCsStep("phone");
         onReject({ message: err.message, broker, ...(err.data as Omit<Rejection, "message">) });
-      } else setError((err as Error).message);
+      } else {
+        // The CoinSwitch login timed out or can't continue: start again from the phone number.
+        if (isCs && err instanceof ApiError && err.data.restart) setCsStep("phone");
+        setError((err as Error).message);
+      }
     } finally {
       setLoading(false);
     }
@@ -215,6 +233,7 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
                 onClick={() => {
                   setBroker(b);
                   setError("");
+                  setCsStep("phone");
                 }}
                 className={`h-10 rounded-full text-[15px] font-medium transition ${
                   broker === b ? "bg-[#0a47ec] text-white" : "text-[#a3a9b6] hover:text-white"
@@ -228,41 +247,81 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
       )}
 
       {isCs ? (
-        <>
-          <label className="ef-label" htmlFor="cs-client">
-            CoinSwitch client ID
-          </label>
-          <div className="relative">
-            <Hash className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
-            <input
-              id="cs-client"
-              inputMode="numeric"
-              required
-              autoFocus
-              autoComplete="off"
-              placeholder="e.g. 13349"
-              className="ef-input h-12 pl-11 text-[16px]"
-              value={csClientId}
-              onChange={(e) => setCsClientId(e.target.value.replace(/\D/g, ""))}
-            />
-          </div>
-          <label className="ef-label mt-5" htmlFor="cs-phone">
-            Phone number
-          </label>
-          <div className="relative">
-            <Phone className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
-            <input
-              id="cs-phone"
-              type="tel"
-              required
-              autoComplete="tel"
-              placeholder="+91 98765 43210"
-              className="ef-input h-12 pl-11 text-[16px]"
-              value={csPhone}
-              onChange={(e) => setCsPhone(e.target.value.replace(/[^\d+\s-]/g, ""))}
-            />
-          </div>
-        </>
+        csStep === "phone" ? (
+          <>
+            <label className="ef-label" htmlFor="cs-phone">
+              CoinSwitch phone number
+            </label>
+            <div className="relative">
+              <Phone className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+              <input
+                id="cs-phone"
+                type="tel"
+                required
+                autoFocus
+                autoComplete="tel"
+                placeholder="+91 98765 43210"
+                className="ef-input h-12 pl-11 text-[16px]"
+                value={csPhone}
+                onChange={(e) => setCsPhone(e.target.value.replace(/[^\d+\s-]/g, ""))}
+              />
+            </div>
+          </>
+        ) : csStep === "otp" ? (
+          <>
+            <label className="ef-label" htmlFor="cs-otp">
+              SMS code from CoinSwitch
+            </label>
+            <div className="relative">
+              <MessageSquare className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+              <input
+                id="cs-otp"
+                required
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{4,8}"
+                placeholder="6-digit code"
+                className="ef-input h-12 pl-11 text-[16px] tracking-[0.2em]"
+                value={csOtp}
+                onChange={(e) => setCsOtp(e.target.value.replace(/\D/g, "").slice(0, 8))}
+              />
+            </div>
+            <p className="mt-3 text-[14px] text-[#8b919d]">
+              Sent to {csSentTo}. <TextButton
+                onClick={() => {
+                  setCsStep("phone");
+                  setError("");
+                }}
+              >
+                Change number
+              </TextButton>
+            </p>
+          </>
+        ) : (
+          <>
+            <label className="ef-label" htmlFor="cs-pin">
+              CoinSwitch PIN
+            </label>
+            <div className="relative">
+              <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[#6b7282]" />
+              <input
+                id="cs-pin"
+                type="password"
+                required
+                autoFocus
+                inputMode="numeric"
+                autoComplete="off"
+                pattern="[0-9]{4,8}"
+                placeholder="Your 4-digit PIN"
+                className="ef-input h-12 pl-11 text-[16px] tracking-[0.2em]"
+                value={csPin}
+                onChange={(e) => setCsPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+              />
+            </div>
+            <p className="mt-3 text-[14px] text-[#8b919d]">The PIN you use to open the CoinSwitch app. It goes only to CoinSwitch and is never saved.</p>
+          </>
+        )
       ) : isXm ? (
         <>
           <label className="ef-label" htmlFor="xm-login">
@@ -309,13 +368,21 @@ function EmailStep({ settings, onDone, onReject }: { settings: PublicSettings; o
 
       <button className="ef-btn mt-11" disabled={loading}>
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-        {loading ? "Checking your account…" : "Continue"}
+        {loading
+          ? isCs && csStep === "phone"
+            ? "Sending code…"
+            : isCs && csStep === "otp"
+              ? "Verifying code…"
+              : "Checking your account…"
+          : isCs && csStep === "phone"
+            ? "Send code"
+            : "Continue"}
       </button>
 
       <Footer>
         <p>
           {isCs
-            ? "Enter your CoinSwitch client ID and the phone number registered with CoinSwitch. You need an active CoinSwitch account opened with our referral to unlock"
+            ? "Log in with your CoinSwitch phone number, SMS code and PIN (we never keep your login). Your CoinSwitch account must be opened with our referral to unlock"
             : isXm
             ? `Enter the MT5 account ID of your XM account (you'll find it in your XM Members Area). You need at least ${minLots} lot${minLots === 1 ? "" : "s"} traded in the last ${settings.xmLotsWindowDays} days to unlock`
             : `Use the email of your Elefin trading account. You need at least ${minLots} traded lot${minLots === 1 ? "" : "s"} to unlock`}
@@ -368,7 +435,7 @@ function RejectionView({ r, onBack }: { r: Rejection; onBack: () => void }) {
           {r.broker === "xm"
             ? "Have a different XM account?"
             : r.broker === "coinswitch"
-              ? "Typed the wrong client ID or phone?"
+              ? "Used a different CoinSwitch account?"
               : "Used a different email with Elefin?"}{" "}
           <TextButton onClick={onBack}>{r.broker === "elefin" || !r.broker ? "Try another email" : "Try again"}</TextButton>.
         </p>

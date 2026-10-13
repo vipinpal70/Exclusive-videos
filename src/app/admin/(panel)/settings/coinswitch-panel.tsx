@@ -1,6 +1,6 @@
 "use client";
 
-import { AlarmClock, Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Dot, Modal } from "@/components/admin-ui";
 import { useConfirm } from "@/components/confirm";
@@ -12,7 +12,6 @@ interface CsStatus {
   expired: boolean;
   expiresAt: string | null;
   phone: string;
-  awaitingPin: boolean;
   leadsCached: number;
   lastSyncAt: string | null;
   statuses: { field: string; value: string; count: number }[];
@@ -28,7 +27,7 @@ function timeLeft(iso: string) {
   return h ? `${h} h ${m} min left` : `${m} min left`;
 }
 
-/** CoinSwitch access token (phone → OTP → PIN), expiry countdown, and the lead list sync. */
+/** CoinSwitch partner login (phone → OTP → PIN) and the lead list sync, both used only by bulk block / unblock. */
 export function CoinSwitchPanel({ editable }: { editable: boolean }) {
   const [status, setStatus] = useState<CsStatus | null>(null);
   const [step, setStep] = useState<Step>("phone");
@@ -90,9 +89,9 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
 
   async function disconnect() {
     const ok = await confirm({
-      title: "Remove the CoinSwitch token?",
-      message: "CoinSwitch clients not already in the saved lead list won’t be able to verify until you get a new token.",
-      confirmLabel: "Remove token",
+      title: "Remove the CoinSwitch partner login?",
+      message: "Bulk block / unblock for CoinSwitch will only be able to use the saved lead list until you log in again. Website verification isn’t affected.",
+      confirmLabel: "Remove login",
       danger: true,
     });
     if (ok) call({ step: "disconnect" });
@@ -124,7 +123,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
 
   if (!status) return null;
   const tone = !status.connected ? "muted" : status.expired ? "error" : "ok";
-  const label = !status.connected ? "Not connected" : status.expired ? "Token expired" : `Connected · ${timeLeft(status.expiresAt!)}`;
+  const label = !status.connected ? "Not connected" : status.expired ? "Login expired" : `Connected · ${timeLeft(status.expiresAt!)}`;
   const statusFields = ["kyc", "bank", "deposit", "trade"].map((f) => ({ f, values: status.statuses.filter((s) => s.field === f) }));
 
   return (
@@ -133,15 +132,15 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-medium text-[#eceef2]">
-            Access token
+            Partner login
             <span className="inline-flex items-center gap-1.5 text-[12px] font-normal text-[#b4b9c4]">
               <Dot tone={tone} /> {label}
             </span>
           </div>
           <p className="mt-0.5 text-[12px] leading-relaxed text-[#7d8390]">
             {status.connected && status.expiresAt
-              ? `Expires ${fmtDate(status.expiresAt)}. CoinSwitch tokens last 24 hours; get a new one before then.`
-              : "Log in with your CoinSwitch partner phone number, the SMS code and your PIN. The PIN is never saved."}
+              ? `Expires ${fmtDate(status.expiresAt)}. Only used to fetch your leads for bulk block / unblock; website verification doesn’t need it.`
+              : "Only needed for bulk block / unblock, to fetch your affiliate leads. Log in with your CoinSwitch partner phone number, the SMS code and your PIN. The PIN is never saved."}
           </p>
         </div>
         {editable && (
@@ -152,7 +151,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
               </button>
             )}
             <button className="btn btn-primary btn-sm" onClick={() => setLoggingIn(true)}>
-              {status.connected ? "Refresh token" : "Get access token"}
+              {status.connected ? "Log in again" : "Log in"}
             </button>
           </div>
         )}
@@ -161,7 +160,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
       <Modal
         open={loggingIn}
         onClose={closeLogin}
-        title={status.connected ? "Refresh CoinSwitch access token" : "Get CoinSwitch access token"}
+        title="CoinSwitch partner login"
         footer={
           <>
             <button type="button" className="btn btn-secondary" onClick={closeLogin} disabled={busy}>
@@ -169,7 +168,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
             </button>
             <button type="submit" form="cs-login" className="btn btn-primary" disabled={busy || !stepReady}>
               {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {step === "phone" ? "Send OTP" : step === "otp" ? "Verify code" : "Get access token"}
+              {step === "phone" ? "Send OTP" : step === "otp" ? "Verify code" : "Log in"}
             </button>
           </>
         }
@@ -266,29 +265,19 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
                 autoFocus
               />
-              <p className="hint">Your PIN is only sent to CoinSwitch to get the token. It is never saved.</p>
+              <p className="hint">Your PIN is only sent to CoinSwitch to log in. It is never saved.</p>
             </div>
           )}
         </form>
       </Modal>
-
-      <div className="flex items-start gap-2 rounded-[5px] border border-[#2b3a5c] bg-[#121a2c] px-3 py-2.5 text-[12px] leading-relaxed text-[#a9c1ff]">
-        <AlarmClock className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>
-          <span className="font-medium text-[#c9d7ff]">Tip:</span> add a repeating reminder in your calendar app (or any reminder app you prefer) to go off every
-          20 to 23 hours, so you refresh the access token here before it expires. While it&apos;s expired, CoinSwitch clients who aren&apos;t already in the saved
-          lead list can&apos;t verify.
-        </span>
-      </div>
 
       {/* Lead list */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="text-[13px] font-medium text-[#eceef2]">Saved lead list</div>
           <p className="mt-0.5 text-[12px] leading-relaxed text-[#7d8390]">
-            Clients are checked instantly against your saved leads, which keeps CoinSwitch API requests to a minimum. If someone isn&apos;t in the saved leads
-            and the list is older than the <span className="text-[#b4b9c4]">Lead list refresh</span> time (set below), the latest leads are fetched from
-            CoinSwitch first. The list stays on the server; the website never sees it.
+            Your affiliate leads (500 per page), used by bulk block / unblock for last activity, deposit and trade status. Bulk tools refresh it
+            automatically before checking; it stays on the server and the website never sees it.
           </p>
           <p className="mt-1 text-[12px] text-[#b4b9c4]">
             {status.leadsCached.toLocaleString()} lead{status.leadsCached === 1 ? "" : "s"} saved now
@@ -312,7 +301,7 @@ export function CoinSwitchPanel({ editable }: { editable: boolean }) {
 
       {status.leadsCached > 0 && (
         <details className="text-[12px] text-[#7d8390]">
-          <summary className="cursor-pointer hover:text-[#b4b9c4]">Status values CoinSwitch sends (used by the eligibility switches)</summary>
+          <summary className="cursor-pointer hover:text-[#b4b9c4]">Status values CoinSwitch sends (used by bulk block / unblock rules)</summary>
           <div className="mt-2 grid gap-2 sm:grid-cols-4">
             {statusFields.map(({ f, values }) => (
               <div key={f} className="rounded-[5px] border border-[#262a33] px-2.5 py-2">

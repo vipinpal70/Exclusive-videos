@@ -38,7 +38,7 @@ export const GET = adminRoute(async () => {
     daily: daily.map((r) => ({ day: r.day, lookups: n(r.lookups), eligible: n(r.eligible) })),
     recent,
     coinswitch:
-      s.cs_enabled === "1"
+      s.cs_enabled === "1" && cs.connected // the partner login only matters once it has been set up (bulk tools)
         ? { connected: cs.connected, expired: cs.expired, expiresAt: cs.expiresAt?.toISOString() ?? null }
         : null,
     setup: {
