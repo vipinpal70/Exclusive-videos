@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, CheckCircle2, Eye, Loader2, RefreshCw, RotateCcw, Send, Trash2, Unlink, Users } from "lucide-react";
+import { Ban, CheckCircle2, Download, Eye, Loader2, RefreshCw, RotateCcw, Send, Trash2, Unlink, Users } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useAdmin } from "@/components/admin-context";
@@ -10,6 +10,7 @@ import { useToast } from "@/components/toast";
 import { api, fmtDate, timeAgo } from "@/lib/api";
 import { BulkBlock } from "./bulk-block";
 import { BulkSend } from "./bulk-send";
+import { ExportMembers } from "./export-members";
 
 interface Member {
   id: number;
@@ -222,6 +223,8 @@ function Members() {
   const { can } = useAdmin();
   const canBulk = can("broadcast.send");
   const canBlock = can("members.manage");
+  const canExport = can("members.export");
+  const [exportOpen, setExportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
   const [unblockOpen, setUnblockOpen] = useState(false);
@@ -233,6 +236,11 @@ function Members() {
         subtitle="Everyone who has checked their Elefin email on the site."
         actions={
           <>
+            {canExport && (
+              <button className="btn btn-secondary" onClick={() => setExportOpen(true)}>
+                <Download className="h-3.5 w-3.5" /> Export
+              </button>
+            )}
             {canBlock && (
               <>
                 <button className="btn btn-secondary" onClick={() => setUnblockOpen(true)}>
@@ -253,6 +261,7 @@ function Members() {
       />
       <BulkBlock mode="block" open={blockOpen} onClose={() => setBlockOpen(false)} onFinished={load} />
       <BulkBlock mode="unblock" open={unblockOpen} onClose={() => setUnblockOpen(false)} onFinished={load} />
+      <ExportMembers open={exportOpen} onClose={() => setExportOpen(false)} />
       <BulkSend open={bulkOpen} onClose={() => setBulkOpen(false)} onFinished={load} />
 
       <div className="card overflow-hidden">
